@@ -17,5 +17,27 @@
             "start": "14:00",
             "end": "17:00"
         }
+    ],
+    "travel_alerts": [
+        {
+            "name": "Morning Office",
+            "enabled": true,
+            "days": ["Mon","Tue","Wed","Thu","Fri"],
+            "source": "KR Market (Kalasipalya)",
+            "destination": "Depot-42 Gate Arrival",
+            "alert_start_location": "Agara Junction",
+            "alert_end_location": "Bellanduru Gate SJP Road",
+            "notification": "Time to leave for the bus stop!"
+        },
+        {
+            "name": "Evening Home",
+            "enabled": true,
+            "days": ["Mon","Tue","Wed","Thu","Fri"],
+            "source": "Depot-42 Gate Departure",
+            "destination": "KR Market (Kalasipalya)",
+            "alert_start_location": "St. John's Hospital",
+            "alert_end_location": "Koramangala Water Tank",
+            "notification": "Time to leave office! Your bus is approaching."
+        }
     ]
 }
