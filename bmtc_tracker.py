@@ -1,0 +1,544 @@
+#!/usr/bin/env python3
+"""
+BMTC Bus Tracker
+
+Monitors a BMTC bus by calling BMTC's internal APIs and generates
+notifications when the tracking becomes stale.
+
+Usage:
+    python bmtc_tracker.py [-h] [-v] [--bus-num=KA57F4864]
+"""
+
+import json
+import os
+import subprocess
+import sys
+import time
+import warnings
+from argparse import ArgumentParser
+from datetime import datetime, timedelta
+from typing import Any, Optional
+
+# Suppress noisy requests/urllib3 dependency version warning before it fires
+warnings.filterwarnings("ignore", message=".*urllib3.*doesn't match a supported version")
+
+import requests
+
+
+################################################################################
+# Constants
+################################################################################
+
+VERSION = "1.0.0"
+LIST_VEHICLES_URL = "https://bmtcmobileapi.karnataka.gov.in/WebAPI/ListVehicles"
+TRIP_DETAILS_URL = "https://bmtcmobileapi.karnataka.gov.in/WebAPI/VehicleTripDetails_v2"
+
+HEADERS = {
+    "Accept": "application/json, text/plain, */*",
+    "Content-Type": "application/json",
+    "Origin": "https://nammabmtcapp.karnataka.gov.in",
+    "Referer": "https://nammabmtcapp.karnataka.gov.in/",
+    "User-Agent": "Mozilla/5.0",
+    "deviceType": "WEB",
+    "lan": "en",
+}
+
+DAY_NAMES = {"Mon": 0, "Tue": 1, "Wed": 2, "Thu": 3, "Fri": 4, "Sat": 5, "Sun": 6}
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+BASH_CMDS_DIR = "/home/snarangaprath/WORK/BASH_CMDS"
+
+
+################################################################################
+# Configuration
+################################################################################
+
+
+def load_config(config_path: str) -> dict[str, Any]:
+    """Load configuration from a JSON file."""
+    with open(config_path, "r") as f:
+        return json.load(f)
+
+
+def find_config() -> str:
+    """Locate config.json in the current directory or script directory."""
+    candidates = [
+        os.path.join(os.getcwd(), "config.json"),
+        os.path.join(SCRIPT_DIR, "config.json"),
+    ]
+    for path in candidates:
+        if os.path.isfile(path):
+            return path
+    print("Error: config.json not found.", file=sys.stderr)
+    sys.exit(1)
+
+
+def parse_cli_args() -> Any:
+    """Parse command-line arguments."""
+    parser = ArgumentParser(description="BMTC Bus Tracker")
+    parser.add_argument(
+        "--bus-num",
+        dest="bus_num",
+        default=None,
+        help="Override bus number from config.json",
+    )
+    parser.add_argument(
+        "-v", "--version", action="store_true", help="Show version and exit"
+    )
+    parser.add_argument(
+        "--always-track",
+        action="store_true",
+        dest="always_track",
+        default=False,
+        help="Ignore schedule and track continuously",
+    )
+    return parser.parse_args()
+
+
+def validate_config(config: dict[str, Any]) -> None:
+    """Validate required configuration fields, exiting on failure."""
+    required = ["bus_number", "poll_interval_secs", "offline_after_mins", "schedule"]
+    for key in required:
+        if key not in config:
+            print(f"Error: config.json missing required key '{key}'.", file=sys.stderr)
+            sys.exit(1)
+    if not isinstance(config["schedule"], list) or len(config["schedule"]) == 0:
+        print("Error: config.json 'schedule' must be a non-empty list.", file=sys.stderr)
+        sys.exit(1)
+    for entry in config["schedule"]:
+        for key in ("name", "enabled", "days", "start", "end"):
+            if key not in entry:
+                print(
+                    f"Error: schedule entry missing '{key}'.", file=sys.stderr
+                )
+                sys.exit(1)
+        for day in entry["days"]:
+            if day not in DAY_NAMES:
+                print(
+                    f"Error: invalid day '{day}' in schedule entry "
+                    f"'{entry['name']}'.",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+        try:
+            datetime.strptime(entry["start"], "%H:%M")
+            datetime.strptime(entry["end"], "%H:%M")
+        except ValueError:
+            print(
+                f"Error: invalid time format in schedule entry '{entry['name']}'.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+
+
+################################################################################
+# BMTC APIs
+################################################################################
+
+
+def resolve_vehicle_id(session: requests.Session, bus_num: str) -> int:
+    """
+    Resolve a vehicle ID from a bus registration number.
+
+    Calls the ListVehicles API and finds the matching vehicle.
+    Exits on failure.
+    """
+    payload: dict[str, Any] = {"vehicleRegNo": bus_num}
+    try:
+        resp = session.post(LIST_VEHICLES_URL, headers=HEADERS, json=payload)
+        resp.raise_for_status()
+        body = resp.json()
+    except (requests.RequestException, json.JSONDecodeError) as e:
+        print(f"Error: vehicle lookup failed: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    if not isinstance(body, dict):
+        print("Error: unexpected response format from ListVehicles.", file=sys.stderr)
+        sys.exit(1)
+
+    vehicles = body.get("data", [])
+    if not isinstance(vehicles, list):
+        print("Error: 'data' field is not a list.", file=sys.stderr)
+        sys.exit(1)
+
+    for vehicle in vehicles:
+        if not isinstance(vehicle, dict):
+            continue
+        reg_no = vehicle.get("vehicleregno", "").strip().upper()
+        if reg_no == bus_num.strip().upper():
+            vid = vehicle.get("vehicleid")
+            if vid is None:
+                print("Error: vehicle found but 'vehicleid' missing.", file=sys.stderr)
+                sys.exit(1)
+            return int(vid)
+
+    print(f"Error: vehicle '{bus_num}' not found in API response.", file=sys.stderr)
+    sys.exit(1)
+
+
+def fetch_trip_details(session: requests.Session, vehicle_id: int) -> Optional[dict[str, Any]]:
+    """
+    Fetch live trip details for a given vehicle ID.
+
+    Returns the parsed JSON dict, or None on error.
+    """
+    payload: dict[str, Any] = {"vehicleId": vehicle_id}
+    try:
+        resp = session.post(TRIP_DETAILS_URL, headers=HEADERS, json=payload)
+        resp.raise_for_status()
+        data: dict[str, Any] = resp.json()
+        return data
+    except (requests.RequestException, json.JSONDecodeError) as e:
+        print(f"Error: trip details fetch failed: {e}")
+        return None
+
+
+################################################################################
+# Time Helpers
+################################################################################
+
+
+def parse_timestamp(ts_str: str) -> Optional[datetime]:
+    """Parse a timestamp string into a datetime object, trying multiple formats."""
+    cleaned = ts_str.strip()
+    for fmt in (
+        "%d-%m-%Y %H:%M:%S",
+        "%d-%m-%Y %H:%M:%S.%f",
+        "%Y-%m-%dT%H:%M:%S",
+        "%Y-%m-%dT%H:%M:%S.%f",
+        "%Y-%m-%d %H:%M:%S",
+        "%Y-%m-%dT%H:%M:%S%z",
+        "%Y-%m-%dT%H:%M:%S.%f%z",
+    ):
+        try:
+            return datetime.strptime(cleaned, fmt)
+        except ValueError:
+            continue
+    try:
+        return datetime.fromisoformat(cleaned)
+    except (ValueError, TypeError):
+        return None
+
+
+def time_str_to_time(t_str: str):
+    """Convert 'HH:MM' string to a time object."""
+    return datetime.strptime(t_str, "%H:%M").time()
+
+
+def is_in_window(now: datetime, entry: dict[str, Any]) -> bool:
+    """
+    Check whether *now* falls inside a single schedule entry.
+
+    Returns True if the entry is enabled, today's day name matches,
+    and the current time is between start and end (inclusive).
+    """
+    if not entry.get("enabled", False):
+        return False
+    if now.strftime("%a") not in entry["days"]:
+        return False
+    start = time_str_to_time(entry["start"])
+    end = time_str_to_time(entry["end"])
+    current = now.time()
+    return start <= current <= end
+
+
+def find_next_window(now: datetime, schedule: list[dict[str, Any]]) -> Optional[datetime]:
+    """
+    Find the earliest datetime after *now* when any enabled window starts.
+
+    Searches up to 14 days ahead.  Returns None if no window exists.
+    """
+    best: Optional[datetime] = None
+    for entry in schedule:
+        if not entry.get("enabled", False):
+            continue
+        start_time = time_str_to_time(entry["start"])
+        for day_offset in range(14):
+            candidate_date = now + timedelta(days=day_offset)
+            if candidate_date.strftime("%a") not in entry["days"]:
+                continue
+            candidate_dt = datetime.combine(candidate_date.date(), start_time)
+            if candidate_dt <= now:
+                continue
+            if best is None or candidate_dt < best:
+                best = candidate_dt
+    return best
+
+
+def format_wait_duration(seconds: float) -> str:
+    """Format a duration in seconds to a human-readable string."""
+    hours = int(seconds // 3600)
+    minutes = int((seconds % 3600) // 60)
+    secs = int(seconds % 60)
+    parts = []
+    if hours > 0:
+        parts.append(f"{hours}h")
+    if minutes > 0:
+        parts.append(f"{minutes}m")
+    if secs > 0 or not parts:
+        parts.append(f"{secs}s")
+    return " ".join(parts)
+
+
+################################################################################
+# Notifications
+################################################################################
+
+
+def _find_script(name: str) -> Optional[str]:
+    """Locate a shell script in PATH or the known BASH_CMDS_DIR."""
+    for dir_path in os.environ.get("PATH", "").split(":"):
+        full = os.path.join(dir_path, name)
+        if os.path.isfile(full):
+            return full
+    full = os.path.join(BASH_CMDS_DIR, name)
+    if os.path.isfile(full):
+        return full
+    return None
+
+
+def notify_stale(message: str) -> None:
+    """Send stale notification via pushover and show it on screen."""
+    build_script = _find_script("buildresultshow.sh")
+    if build_script:
+        try:
+            subprocess.run(
+                [build_script, "60", message],
+                timeout=10,
+                capture_output=True,
+            )
+        except (FileNotFoundError, subprocess.TimeoutExpired) as e:
+            print(f"Warning: buildresultshow.sh failed: {e}")
+    else:
+        print("Warning: buildresultshow.sh not found; skipping display notification.")
+
+    push_script = _find_script("pushover_msg_send.sh")
+    if push_script:
+        try:
+            subprocess.run(
+                [push_script, message],
+                timeout=10,
+                capture_output=True,
+            )
+        except (FileNotFoundError, subprocess.TimeoutExpired) as e:
+            print(f"Warning: pushover_msg_send.sh failed: {e}")
+    else:
+        print("Warning: pushover_msg_send.sh not found; skipping push notification.")
+
+
+def notify_resumed() -> None:
+    """Clear the stale notification display."""
+    kill_script = _find_script("kill_buildresultshow.sh")
+    if kill_script:
+        try:
+            subprocess.run([kill_script], timeout=10, capture_output=True)
+            return
+        except (FileNotFoundError, subprocess.TimeoutExpired) as e:
+            print(f"Warning: kill_buildresultshow.sh failed: {e}")
+
+    try:
+        subprocess.run(
+            ["pkill", "-f", "result_show.py"],
+            timeout=5,
+            capture_output=True,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired) as e:
+        print(f"Warning: pkill fallback failed: {e}")
+
+
+################################################################################
+# Tracking
+################################################################################
+
+
+def print_separator() -> None:
+    """Print the standard separator line."""
+    print("=" * 54)
+
+
+def check_tracking(
+    trip_data: dict[str, Any],
+    bus_num: str,
+    offline_after: timedelta,
+    notified_stale: list[bool],
+) -> bool:
+    """
+    Evaluate the freshness of tracking data.
+
+    Compares *lastrefreshon* against the current time.  If the difference
+    exceeds *offline_after*, tracking is considered stale.
+
+    Generates exactly ONE notification when tracking goes stale, and
+    clears it when tracking resumes.
+
+    Returns True if tracking is OK, False if stale.
+    """
+    live = trip_data.get("LiveLocation")
+    if not live or not isinstance(live, list) or len(live) == 0:
+        print("No LiveLocation data available.")
+        print()
+        return True
+
+    loc = live[0]
+    last_refresh_str = loc.get("lastrefreshon", "") or ""
+    if not last_refresh_str:
+        print("No 'lastrefreshon' field in response.")
+        print()
+        return True
+
+    last_refresh = parse_timestamp(last_refresh_str)
+    if last_refresh is None:
+        print(f"Could not parse lastrefreshon: {last_refresh_str}")
+        print()
+        return True
+
+    now = datetime.now()
+    diff = now - last_refresh
+
+    previous_stop = loc.get("previousstop", "N/A") or "N/A"
+    next_stop = loc.get("nextstop", "N/A") or "N/A"
+    latitude = loc.get("latitude", "N/A")
+    longitude = loc.get("longitude", "N/A")
+    heading = loc.get("heading", "") or ""
+    location_name = loc.get("location", "") or ""
+    trip_status = loc.get("trip_status", "") or ""
+
+    print(f"Last Refresh  : {last_refresh}")
+    print(f"Current Time  : {now}")
+    print(f"Difference    : {diff}")
+    print()
+    print("Bus is between:")
+    print(f"  {previous_stop}")
+    print("  \u2193")
+    print(f"  {next_stop}")
+    if heading:
+        print(f"Heading       : {heading}")
+    if location_name:
+        print(f"Location      : {location_name}")
+    if trip_status:
+        print(f"Trip Status   : {trip_status}")
+    print(f"Coordinates   : {latitude}, {longitude}")
+    print()
+
+    is_stale = diff > offline_after
+
+    if is_stale:
+        print("Tracking appears stale")
+        if not notified_stale[0]:
+            msg = (
+                f"Bus {bus_num} tracking is stale. "
+                f"Last refresh: {last_refresh_str}. "
+                f"Location: {location_name or previous_stop}"
+            )
+            notify_stale(msg)
+            notified_stale[0] = True
+    else:
+        print("Tracking OK")
+        if notified_stale[0]:
+            notify_resumed()
+            notified_stale[0] = False
+
+    print()
+    return not is_stale
+
+
+################################################################################
+# Monitoring
+################################################################################
+
+
+def monitor(
+    session: requests.Session,
+    vehicle_id: int,
+    bus_num: str,
+    offline_after: timedelta,
+    notified_stale: list[bool],
+) -> None:
+    """Perform a single poll of vehicle tracking data."""
+    print_separator()
+    print(datetime.now().strftime("%a %b %d %H:%M:%S"))
+    print(f"Checking {bus_num}")
+    print_separator()
+    print()
+
+    trip_data = fetch_trip_details(session, vehicle_id)
+    if trip_data is None:
+        print("Trip details unavailable; will retry on next poll.")
+        print()
+        return
+
+    check_tracking(trip_data, bus_num, offline_after, notified_stale)
+
+
+################################################################################
+# Main
+################################################################################
+
+
+def main() -> None:
+    """Entry point."""
+    args = parse_cli_args()
+
+    if args.version:
+        print(f"bmtc_tracker.py version {VERSION}")
+        sys.exit(0)
+
+    config_path = find_config()
+    config = load_config(config_path)
+    validate_config(config)
+
+    bus_num = args.bus_num or config["bus_number"]
+    poll_interval = config["poll_interval_secs"]
+    offline_after = timedelta(minutes=config["offline_after_mins"])
+    always_track = args.always_track
+    schedule = config["schedule"]
+
+    session = requests.Session()
+    vehicle_id = resolve_vehicle_id(session, bus_num)
+
+    print(f"Tracking bus {bus_num} (vehicle ID: {vehicle_id})")
+    if always_track:
+        print("Mode: continuous tracking (schedule ignored)")
+    print()
+
+    notified_stale: list[bool] = [False]
+
+    while True:
+        if always_track:
+            monitor(session, vehicle_id, bus_num, offline_after, notified_stale)
+            time.sleep(poll_interval)
+            continue
+
+        now = datetime.now()
+        in_window = any(is_in_window(now, entry) for entry in schedule)
+
+        if in_window:
+            monitor(session, vehicle_id, bus_num, offline_after, notified_stale)
+            time.sleep(poll_interval)
+        else:
+            next_window = find_next_window(now, schedule)
+            if next_window is None:
+                print(
+                    "No upcoming monitoring windows found "
+                    "in the next 14 days. Sleeping 1 hour."
+                )
+                print()
+                time.sleep(3600)
+                continue
+
+            sleep_secs = (next_window - datetime.now()).total_seconds()
+            if sleep_secs <= 0:
+                continue
+
+            wait_str = format_wait_duration(sleep_secs)
+            print(
+                f"Outside monitoring window. "
+                f"Next window at "
+                f"{next_window.strftime('%a %b %d %H:%M:%S')} "
+                f"(in {wait_str}). Sleeping."
+            )
+            print()
+            time.sleep(sleep_secs)
+
+
+if __name__ == "__main__":
+    main()

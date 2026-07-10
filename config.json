@@ -1,0 +1,21 @@
+{
+    "bus_number": "KA57F4864",
+    "poll_interval_secs": 30,
+    "offline_after_mins": 5,
+    "schedule": [
+        {
+            "name": "Morning",
+            "enabled": true,
+            "days": ["Mon","Tue","Wed","Thu","Fri"],
+            "start": "07:00",
+            "end": "08:30"
+        },
+        {
+            "name": "Afternoon",
+            "enabled": true,
+            "days": ["Mon","Tue","Wed","Thu","Fri"],
+            "start": "14:00",
+            "end": "17:00"
+        }
+    ]
+}
