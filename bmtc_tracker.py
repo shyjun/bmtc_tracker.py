@@ -48,6 +48,7 @@ HEADERS = {
 DAY_NAMES = {"Mon": 0, "Tue": 1, "Wed": 2, "Thu": 3, "Fri": 4, "Sat": 5, "Sun": 6}
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 BASH_CMDS_DIR = "/home/snarangaprath/WORK/BASH_CMDS"
+DEVELOPMENT_MODE = False
 
 
 ################################################################################
@@ -997,12 +998,22 @@ def check_travel_alerts(
     if not trip_info["source"] or not trip_info["destination"]:
         return
 
-    if _verbose:
+    if DEVELOPMENT_MODE:
         stops = _build_stop_list(trip_data)
         if stops:
+            loc = trip_info.get("location")
+            current_idx = None
+            if loc:
+                norm_loc = _normalize(loc)
+                norm_stops = [_normalize(s) for s in stops]
+                for i, ns in enumerate(norm_stops):
+                    if ns in norm_loc or norm_loc in ns:
+                        current_idx = i
+                        break
             log("Route stop list:")
             for i, s in enumerate(stops):
-                log(f"  {i}: {s}")
+                marker = "  <<<<<" if i == current_idx else ""
+                log(f"  {i}: {s}{marker}")
 
     for entry in schedule:
         if not entry.get("enabled", False):
