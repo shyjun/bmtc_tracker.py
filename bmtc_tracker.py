@@ -53,6 +53,7 @@ BASH_CMDS_DIR = "/home/snarangaprath/WORK/BASH_CMDS"
 ################################################################################
 
 _verbose = False
+_show_http_msgs = False
 
 
 def log(message: str = "") -> None:
@@ -122,6 +123,13 @@ def parse_cli_args() -> Any:
         default=False,
         help="Ignore schedule and track continuously",
     )
+    parser.add_argument(
+        "--show-http-msgs",
+        action="store_true",
+        dest="show_http_msgs",
+        default=False,
+        help="Print HTTP request and response messages",
+    )
     return parser.parse_args()
 
 
@@ -168,7 +176,35 @@ def _api_post(
     payload: dict[str, Any],
 ) -> Any:
     """Make an API POST request with standard headers and timeout."""
+    if _show_http_msgs:
+        log()
+        log("--- HTTP REQUEST ---")
+        log(f"POST {url}")
+        log("Headers:")
+        for k, v in HEADERS.items():
+            log(f"  {k}: {v}")
+        log("Body:")
+        for line in json.dumps(payload, indent=2).splitlines():
+            log(f"  {line}")
+
     resp = session.post(url, headers=HEADERS, json=payload, timeout=HTTP_TIMEOUT)
+
+    if _show_http_msgs:
+        log()
+        log("--- HTTP RESPONSE ---")
+        log(f"Status: {resp.status_code}")
+        log("Headers:")
+        for k, v in resp.headers.items():
+            log(f"  {k}: {v}")
+        log("Body:")
+        try:
+            pretty = json.dumps(resp.json(), indent=2)
+            for line in pretty.splitlines():
+                log(f"  {line}")
+        except Exception:
+            for line in resp.text.splitlines():
+                log(f"  {line}")
+
     resp.raise_for_status()
     return resp.json()
 
@@ -596,7 +632,7 @@ def print_startup_banner(
 
 def main() -> None:
     """Entry point."""
-    global _verbose
+    global _verbose, _show_http_msgs
 
     args = parse_cli_args()
 
@@ -605,6 +641,7 @@ def main() -> None:
         sys.exit(0)
 
     _verbose = args.verbose
+    _show_http_msgs = args.show_http_msgs
 
     config_path = find_config()
     config = load_config(config_path)
