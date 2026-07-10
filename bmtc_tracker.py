@@ -5,8 +5,7 @@ BMTC Bus Tracker
 Monitors a BMTC bus by calling BMTC's internal APIs and generates
 notifications when the tracking becomes stale.
 
-Usage:
-    python bmtc_tracker.py [-h] [-v] [--version] [--bus-num=KA57F4864] [--always-track]
+Run with -h for usage info.
 """
 
 import atexit
