@@ -180,7 +180,8 @@ def validate_config(config: dict[str, Any]) -> None:
         log_error("Error: config.json 'schedule' must be a non-empty list.")
         sys.exit(1)
     for entry in config["schedule"]:
-        for key in ("name", "enabled", "days", "start", "end"):
+        for key in ("name", "enabled", "days", "start", "end",
+                     "source", "destination", "alert"):
             if key not in entry:
                 log_error(f"Error: schedule entry missing '{key}'.")
                 sys.exit(1)
@@ -199,24 +200,14 @@ def validate_config(config: dict[str, Any]) -> None:
                 f"Error: invalid time format in schedule entry '{entry['name']}'."
             )
             sys.exit(1)
-
-    travel_alerts = config.get("travel_alerts", [])
-    if not isinstance(travel_alerts, list):
-        log_error("Error: config.json 'travel_alerts' must be a list.")
-        sys.exit(1)
-    for entry in travel_alerts:
-        for key in ("name", "enabled", "days", "source", "destination",
-                     "alert_start_location", "alert_end_location", "notification"):
-            if key not in entry:
+        alert = entry["alert"]
+        if not isinstance(alert, dict):
+            log_error(f"Error: 'alert' in schedule entry '{entry['name']}' must be an object.")
+            sys.exit(1)
+        for key in ("alert_start_location", "alert_end_location", "notification"):
+            if key not in alert:
                 log_error(
-                    f"Error: travel_alert entry missing '{key}'."
-                )
-                sys.exit(1)
-        for day in entry["days"]:
-            if day not in DAY_NAMES:
-                log_error(
-                    f"Error: invalid day '{day}' in travel_alert "
-                    f"'{entry['name']}'."
+                    f"Error: schedule entry '{entry['name']}' alert missing '{key}'."
                 )
                 sys.exit(1)
 
@@ -757,11 +748,11 @@ def _normalize(name: Optional[str]) -> str:
     return _re.sub(r"\s+", " ", name.strip().lower())
 
 
-def matches_route(trip_info: dict[str, Any], alert: dict[str, Any]) -> bool:
-    """Check if the current trip route matches the alert source/destination."""
+def matches_route(trip_info: dict[str, Any], entry: dict[str, Any]) -> bool:
+    """Check if the current trip route matches the entry source/destination."""
     return (
-        _normalize(trip_info["source"]) == _normalize(alert["source"])
-        and _normalize(trip_info["destination"]) == _normalize(alert["destination"])
+        _normalize(trip_info["source"]) == _normalize(entry["source"])
+        and _normalize(trip_info["destination"]) == _normalize(entry["destination"])
     )
 
 
@@ -775,25 +766,26 @@ def is_at_end(trip_info: dict[str, Any], alert: dict[str, Any]) -> bool:
     return _normalize(trip_info["next_stop"]) == _normalize(alert["alert_end_location"])
 
 
-def matches_day(trip_info: dict[str, Any], alert: dict[str, Any]) -> bool:
-    """Check if today's weekday is in the alert's configured days."""
-    return datetime.now().strftime("%a") in alert["days"]
+def matches_day(trip_info: dict[str, Any], entry: dict[str, Any]) -> bool:
+    """Check if today's weekday is in the entry's configured days."""
+    return datetime.now().strftime("%a") in entry["days"]
 
 
-def _fire_travel_alert(alert: dict[str, Any]) -> None:
+def _fire_travel_alert(entry: dict[str, Any]) -> None:
     """Send the travel alert notification and log the formatted block."""
+    alert = entry["alert"]
     log_separator()
     print_blank()
     print_section("TRAVEL ALERT")
     print_blank()
     log("Alert Name")
-    log(alert["name"])
+    log(entry["name"])
     print_blank()
     log("Source")
-    log(alert["source"])
+    log(entry["source"])
     print_blank()
     log("Destination")
-    log(alert["destination"])
+    log(entry["destination"])
     print_blank()
     log("Bus Segment")
     log(alert["alert_start_location"])
@@ -811,44 +803,46 @@ def _fire_travel_alert(alert: dict[str, Any]) -> None:
 
 def check_travel_alerts(
     trip_info: dict[str, Any],
-    travel_alerts: list[dict[str, Any]],
+    schedule: list[dict[str, Any]],
 ) -> None:
-    """Evaluate every enabled travel alert against the current trip data."""
+    """Evaluate alerts from enabled schedule entries against the current trip."""
     global _travel_alert_fired
 
-    if not travel_alerts:
+    if not schedule:
         return
     if trip_info["is_idle"]:
         return
     if not trip_info["source"] or not trip_info["destination"]:
         return
 
-    for alert in travel_alerts:
-        if not alert.get("enabled", False):
+    for entry in schedule:
+        if not entry.get("enabled", False):
+            continue
+        alert = entry.get("alert")
+        if not alert:
             continue
 
-        if not matches_day(trip_info, alert):
-            _travel_alert_fired.pop(alert["name"], None)
+        if not matches_day(trip_info, entry):
+            _travel_alert_fired.pop(entry["name"], None)
             continue
 
-        route_ok = matches_route(trip_info, alert)
-        if not route_ok:
-            _travel_alert_fired.pop(alert["name"], None)
+        if not matches_route(trip_info, entry):
+            _travel_alert_fired.pop(entry["name"], None)
             continue
 
         approaching = is_approaching_start(trip_info, alert)
         at_end = is_at_end(trip_info, alert)
-        was_fired = _travel_alert_fired.get(alert["name"], False)
+        was_fired = _travel_alert_fired.get(entry["name"], False)
 
         if approaching and not was_fired:
-            _fire_travel_alert(alert)
-            _travel_alert_fired[alert["name"]] = True
+            _fire_travel_alert(entry)
+            _travel_alert_fired[entry["name"]] = True
         elif at_end and was_fired:
             notify_resumed()
-            _travel_alert_fired.pop(alert["name"], None)
+            _travel_alert_fired.pop(entry["name"], None)
         elif not approaching and not at_end and was_fired:
             notify_resumed()
-            _travel_alert_fired.pop(alert["name"], None)
+            _travel_alert_fired.pop(entry["name"], None)
 
 
 ################################################################################
@@ -892,7 +886,7 @@ def monitor(
     bus_num: str,
     offline_after: timedelta,
     poll_interval: int,
-    travel_alerts: Optional[list[dict[str, Any]]] = None,
+    schedule: Optional[list[dict[str, Any]]] = None,
 ) -> None:
     """Perform a single poll of vehicle tracking data."""
     global _was_idle, _last_good_refresh, _stale_notified
@@ -941,8 +935,8 @@ def monitor(
         check_tracking(trip_info, bus_num, offline_after)
         if _was_idle:
             _was_idle = False
-        if travel_alerts:
-            check_travel_alerts(trip_info, travel_alerts)
+        if schedule:
+            check_travel_alerts(trip_info, schedule)
         return
 
 
@@ -972,39 +966,25 @@ def print_startup_banner(
     if always_track:
         log("Mode                : Continuous tracking (schedule ignored)")
     else:
-        print_section("Schedules")
-        for entry in config["schedule"]:
-            if not entry.get("enabled", False):
-                continue
+        enabled_entries = [e for e in config["schedule"] if e.get("enabled", False)]
+        for i, entry in enumerate(enabled_entries):
             days_str = format_schedule_days(entry["days"])
-            label = f"  {entry['name']:<20}"
-            log(f"{label}: {days_str} {entry['start']} - {entry['end']}")
-    print_blank()
-
-    travel_alerts = config.get("travel_alerts", [])
-    if travel_alerts:
-        print_section("Travel Alerts")
-        for i, entry in enumerate(travel_alerts, 1):
-            if not entry.get("enabled", False):
-                continue
-            days_str = format_schedule_days(entry["days"])
-            print_blank()
-            log(f"{i})")
+            alert = entry["alert"]
             log(entry["name"])
-            print_blank()
+            log(days_str)
+            log(f"{entry['start']} - {entry['end']}")
             log(entry["source"])
             print_arrow()
             log(entry["destination"])
-            print_blank()
-            log("Alert Segment")
-            log(entry["alert_start_location"])
+            log("Alert")
+            log(alert["alert_start_location"])
             print_arrow()
-            log(entry["alert_end_location"])
-            print_blank()
+            log(alert["alert_end_location"])
             log("Notification")
-            log(entry["notification"])
-            if i < len(travel_alerts):
+            log(alert["notification"])
+            if i < len(enabled_entries) - 1:
                 log("-" * 56)
+    print_blank()
 
     log_separator()
     print_blank()
@@ -1037,7 +1017,6 @@ def main() -> None:
     offline_after = timedelta(minutes=config["offline_after_mins"])
     always_track = args.always_track
     schedule = config["schedule"]
-    travel_alerts = config.get("travel_alerts", [])
 
     session = requests.Session()
     vehicle_id = resolve_vehicle_id(session, bus_num)
@@ -1048,7 +1027,7 @@ def main() -> None:
 
     while True:
         if always_track:
-            monitor(session, vehicle_id, bus_num, offline_after, poll_interval, travel_alerts)
+            monitor(session, vehicle_id, bus_num, offline_after, poll_interval, schedule)
             time.sleep(poll_interval)
             continue
 
@@ -1063,7 +1042,7 @@ def main() -> None:
                 log(f"{active} Schedule Started")
                 print_blank()
                 _active_schedule = active
-            monitor(session, vehicle_id, bus_num, offline_after, poll_interval, travel_alerts)
+            monitor(session, vehicle_id, bus_num, offline_after, poll_interval, schedule)
             time.sleep(poll_interval)
         else:
             if _active_schedule is not None:
