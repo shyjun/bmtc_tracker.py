@@ -588,6 +588,7 @@ def format_wait_duration(seconds: float) -> str:
 _stale_notified = False
 _travel_alert_fired: dict[str, bool] = {}
 _was_idle = False
+_last_good_refresh: Optional[datetime] = None
 
 
 ################################################################################
@@ -764,12 +765,14 @@ def matches_route(trip_info: dict[str, Any], alert: dict[str, Any]) -> bool:
     )
 
 
-def matches_segment(trip_info: dict[str, Any], alert: dict[str, Any]) -> bool:
-    """Check if the current bus segment matches the alert start/end locations."""
-    return (
-        _normalize(trip_info["previous_stop"]) == _normalize(alert["alert_start_location"])
-        and _normalize(trip_info["next_stop"]) == _normalize(alert["alert_end_location"])
-    )
+def is_approaching_start(trip_info: dict[str, Any], alert: dict[str, Any]) -> bool:
+    """Check if the bus's next stop is the alert start location (approaching)."""
+    return _normalize(trip_info["next_stop"]) == _normalize(alert["alert_start_location"])
+
+
+def is_at_end(trip_info: dict[str, Any], alert: dict[str, Any]) -> bool:
+    """Check if the bus's next stop is the alert end location (segment passed)."""
+    return _normalize(trip_info["next_stop"]) == _normalize(alert["alert_end_location"])
 
 
 def matches_day(trip_info: dict[str, Any], alert: dict[str, Any]) -> bool:
@@ -829,13 +832,22 @@ def check_travel_alerts(
             continue
 
         route_ok = matches_route(trip_info, alert)
-        segment_ok = matches_segment(trip_info, alert)
+        if not route_ok:
+            _travel_alert_fired.pop(alert["name"], None)
+            continue
 
-        if route_ok and segment_ok:
-            if not _travel_alert_fired.get(alert["name"], False):
-                _fire_travel_alert(alert)
-                _travel_alert_fired[alert["name"]] = True
-        else:
+        approaching = is_approaching_start(trip_info, alert)
+        at_end = is_at_end(trip_info, alert)
+        was_fired = _travel_alert_fired.get(alert["name"], False)
+
+        if approaching and not was_fired:
+            _fire_travel_alert(alert)
+            _travel_alert_fired[alert["name"]] = True
+        elif at_end and was_fired:
+            notify_resumed()
+            _travel_alert_fired.pop(alert["name"], None)
+        elif not approaching and not at_end and was_fired:
+            notify_resumed()
             _travel_alert_fired.pop(alert["name"], None)
 
 
@@ -883,7 +895,7 @@ def monitor(
     travel_alerts: Optional[list[dict[str, Any]]] = None,
 ) -> None:
     """Perform a single poll of vehicle tracking data."""
-    global _was_idle
+    global _was_idle, _last_good_refresh, _stale_notified
 
     log_separator()
     log(datetime.now().strftime("%a %b %d %H:%M:%S"))
@@ -893,11 +905,24 @@ def monitor(
 
     trip_data = fetch_trip_details(session, vehicle_id)
     if trip_data is None:
+        if _last_good_refresh and datetime.now() - _last_good_refresh > offline_after:
+            if not _stale_notified:
+                msg = (
+                    f"Bus {bus_num} tracking is stale. "
+                    f"No API response received since {_last_good_refresh}."
+                )
+                notify_stale(msg)
+                _stale_notified = True
         log(f"Network/API error. Retrying in {poll_interval} seconds...")
         print_blank()
         return
 
     trip_info = extract_trip_info(trip_data)
+
+    if trip_info["last_refresh"] is not None:
+        if _last_good_refresh is None or trip_info["last_refresh"] > _last_good_refresh:
+            _last_good_refresh = trip_info["last_refresh"]
+
     state = determine_tracker_state(trip_info, offline_after)
 
     if state == TRACKER_OFFLINE:
