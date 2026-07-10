@@ -939,6 +939,7 @@ def _check_alert_positional(
         if was_fired:
             notify_resumed()
             _travel_alert_fired.pop(name, None)
+        entry["_state"] = "COMPLETED"
         return
 
     if current_idx >= start_idx:
@@ -1017,6 +1018,8 @@ def check_travel_alerts(
     for entry in schedule:
         if not entry.get("enabled", False):
             continue
+        if entry.get("_state") == "COMPLETED":
+            continue
         alert = entry.get("alert")
         if not alert:
             continue
@@ -1040,6 +1043,7 @@ def check_travel_alerts(
             elif at_end and was_fired:
                 notify_resumed()
                 _travel_alert_fired.pop(entry["name"], None)
+                entry["_state"] = "COMPLETED"
             elif not approaching and not at_end and was_fired:
                 notify_resumed()
                 _travel_alert_fired.pop(entry["name"], None)
@@ -1220,6 +1224,8 @@ def main() -> None:
     offline_after = timedelta(minutes=config["offline_after_mins"])
     always_track = args.always_track
     schedule = config["schedule"]
+    for entry in schedule:
+        entry["_state"] = "ACTIVE"
 
     session = requests.Session()
     vehicle_id = resolve_vehicle_id(session, bus_num)
@@ -1227,6 +1233,7 @@ def main() -> None:
     print_startup_banner(config, bus_num, vehicle_id, always_track)
 
     _active_schedule: Optional[str] = None
+    _current_date = datetime.now().date()
 
     while True:
         if always_track:
@@ -1235,7 +1242,18 @@ def main() -> None:
             continue
 
         now = datetime.now()
-        active = get_active_window_name(now, schedule)
+
+        new_date = now.date()
+        if new_date != _current_date:
+            _current_date = new_date
+            for entry in schedule:
+                entry["_state"] = "ACTIVE"
+            _travel_alert_fired.clear()
+            log("New day. All schedules reset.")
+            print_blank()
+
+        active_schedule_list = [e for e in schedule if e.get("_state") != "COMPLETED"]
+        active = get_active_window_name(now, active_schedule_list)
 
         if active:
             if active != _active_schedule:
@@ -1246,6 +1264,34 @@ def main() -> None:
                 print_blank()
                 _active_schedule = active
             monitor(session, vehicle_id, bus_num, offline_after, poll_interval, schedule)
+
+            active_entry = next((e for e in schedule if e["name"] == active), None)
+            if active_entry and active_entry.get("_state") == "COMPLETED":
+                log_separator()
+                log(f"{active} schedule completed.")
+                alert = active_entry["alert"]
+                log("Bus has crossed")
+                log(alert["alert_end_location"])
+                log("Monitoring stopped for this schedule.")
+                log_separator()
+                print_blank()
+                _active_schedule = None
+                remaining = [e for e in schedule if e.get("_state") != "COMPLETED"]
+                next_window = find_next_window(now, remaining)
+                if next_window is None:
+                    log("No upcoming monitoring windows found in the next 14 days.")
+                    log("Sleeping 1 hour.")
+                    print_blank()
+                    time.sleep(3600)
+                    continue
+                sleep_secs = (next_window - datetime.now()).total_seconds()
+                if sleep_secs > 0:
+                    wait_str = format_wait_duration(sleep_secs)
+                    log("Waiting for next schedule...")
+                    log(wait_str)
+                    print_blank()
+                    time.sleep(sleep_secs)
+                continue
             time.sleep(poll_interval)
         else:
             if _active_schedule is not None:
@@ -1253,7 +1299,7 @@ def main() -> None:
                 print_blank()
                 _active_schedule = None
 
-            next_window = find_next_window(now, schedule)
+            next_window = find_next_window(now, active_schedule_list)
             if next_window is None:
                 log("No upcoming monitoring windows found in the next 14 days.")
                 log("Sleeping 1 hour.")
