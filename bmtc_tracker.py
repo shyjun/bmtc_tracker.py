@@ -850,6 +850,108 @@ def matches_day(trip_info: dict[str, Any], entry: dict[str, Any]) -> bool:
     return datetime.now().strftime("%a") in entry["days"]
 
 
+def _build_stop_list(trip_data: dict[str, Any]) -> list[str]:
+    """Extract ordered stop names from RouteDetails in route order."""
+    routes = get_route_details(trip_data)
+    stops = []
+    for r in routes:
+        name = r.get("stationname")
+        if name:
+            stops.append(name)
+    return stops
+
+
+def _check_alert_positional(
+    trip_info: dict[str, Any],
+    trip_data: dict[str, Any],
+    entry: dict[str, Any],
+) -> None:
+    """
+    Position-based travel alert fallback when nextstop/previousstop are null.
+
+    Builds an ordered stop list from RouteDetails, locates the bus
+    within it, and compares against alert_start_location / alert_end_location
+    indices to fire/dismiss notifications.
+    """
+    global _travel_alert_fired
+
+    stops = _build_stop_list(trip_data)
+    if not stops:
+        return
+
+    if _verbose:
+        log("Route stop list:")
+        for i, s in enumerate(stops):
+            log(f"  {i}: {s}")
+
+    norm_stops = [_normalize(s) for s in stops]
+    alert = entry["alert"]
+    norm_start = _normalize(alert["alert_start_location"])
+    norm_end = _normalize(alert["alert_end_location"])
+
+    try:
+        start_idx = norm_stops.index(norm_start)
+    except ValueError:
+        return
+    try:
+        end_idx = norm_stops.index(norm_end)
+    except ValueError:
+        return
+
+    # Determine where the bus currently is along the stop list
+    current_idx = None
+    next_stop = trip_info.get("next_stop")
+    prev_stop = trip_info.get("previous_stop")
+    location = trip_info.get("location")
+
+    if next_stop:
+        norm_next = _normalize(next_stop)
+        try:
+            next_idx = norm_stops.index(norm_next)
+            current_idx = next_idx - 1
+            if current_idx < 0:
+                current_idx = 0
+        except ValueError:
+            pass
+
+    if current_idx is None and prev_stop:
+        norm_prev = _normalize(prev_stop)
+        try:
+            current_idx = norm_stops.index(norm_prev)
+        except ValueError:
+            pass
+
+    if current_idx is None and location:
+        norm_loc = _normalize(location)
+        for i, s in enumerate(stops):
+            ns = norm_stops[i]
+            if ns in norm_loc or norm_loc in ns:
+                current_idx = i
+                break
+
+    if current_idx is None:
+        return
+
+    name = entry["name"]
+    was_fired = _travel_alert_fired.get(name, False)
+
+    if current_idx >= end_idx:
+        if was_fired:
+            notify_resumed()
+            _travel_alert_fired.pop(name, None)
+        return
+
+    if current_idx >= start_idx:
+        if not was_fired:
+            _fire_travel_alert(entry)
+            _travel_alert_fired[name] = True
+        return
+
+    if was_fired:
+        notify_resumed()
+        _travel_alert_fired.pop(name, None)
+
+
 def _fire_travel_alert(entry: dict[str, Any]) -> None:
     """Send the travel alert notification and log the formatted block."""
     alert = entry["alert"]
@@ -882,6 +984,7 @@ def _fire_travel_alert(entry: dict[str, Any]) -> None:
 
 def check_travel_alerts(
     trip_info: dict[str, Any],
+    trip_data: dict[str, Any],
     schedule: list[dict[str, Any]],
 ) -> None:
     """Evaluate alerts from enabled schedule entries against the current trip."""
@@ -893,6 +996,13 @@ def check_travel_alerts(
         return
     if not trip_info["source"] or not trip_info["destination"]:
         return
+
+    if _verbose:
+        stops = _build_stop_list(trip_data)
+        if stops:
+            log("Route stop list:")
+            for i, s in enumerate(stops):
+                log(f"  {i}: {s}")
 
     for entry in schedule:
         if not entry.get("enabled", False):
@@ -909,19 +1019,22 @@ def check_travel_alerts(
             _travel_alert_fired.pop(entry["name"], None)
             continue
 
-        approaching = is_approaching_start(trip_info, alert)
-        at_end = is_at_end(trip_info, alert)
-        was_fired = _travel_alert_fired.get(entry["name"], False)
+        if trip_info.get("previous_stop") and trip_info.get("next_stop"):
+            approaching = is_approaching_start(trip_info, alert)
+            at_end = is_at_end(trip_info, alert)
+            was_fired = _travel_alert_fired.get(entry["name"], False)
 
-        if approaching and not was_fired:
-            _fire_travel_alert(entry)
-            _travel_alert_fired[entry["name"]] = True
-        elif at_end and was_fired:
-            notify_resumed()
-            _travel_alert_fired.pop(entry["name"], None)
-        elif not approaching and not at_end and was_fired:
-            notify_resumed()
-            _travel_alert_fired.pop(entry["name"], None)
+            if approaching and not was_fired:
+                _fire_travel_alert(entry)
+                _travel_alert_fired[entry["name"]] = True
+            elif at_end and was_fired:
+                notify_resumed()
+                _travel_alert_fired.pop(entry["name"], None)
+            elif not approaching and not at_end and was_fired:
+                notify_resumed()
+                _travel_alert_fired.pop(entry["name"], None)
+        else:
+            _check_alert_positional(trip_info, trip_data, entry)
 
 
 ################################################################################
@@ -1015,7 +1128,7 @@ def monitor(
         if _was_idle:
             _was_idle = False
         if schedule:
-            check_travel_alerts(trip_info, schedule)
+            check_travel_alerts(trip_info, trip_data, schedule)
         return
 
 
