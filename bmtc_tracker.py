@@ -9,6 +9,8 @@ Usage:
     python bmtc_tracker.py [-h] [-v] [--version] [--bus-num=KA57F4864] [--always-track]
 """
 
+import atexit
+import io
 import json
 import os
 import subprocess
@@ -46,6 +48,8 @@ HEADERS = {
 DAY_NAMES = {"Mon": 0, "Tue": 1, "Wed": 2, "Thu": 3, "Fri": 4, "Sat": 5, "Sun": 6}
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 BASH_CMDS_DIR = "/home/snarangaprath/WORK/BASH_CMDS"
+MAX_LOG_LINES = 2000
+TRIM_TO_LINES = 1000
 
 
 ################################################################################
@@ -66,13 +70,15 @@ _show_http_msgs = False
 
 
 def log(message: str = "") -> None:
-    """Print a message to stdout."""
+    """Print a message to stdout and write to the log file."""
     print(message)
+    file_log(message)
 
 
 def log_error(message: str) -> None:
-    """Print an error message to stderr."""
+    """Print an error message to stderr and write to the log file."""
     print(message, file=sys.stderr)
+    file_log(message)
 
 
 def log_separator() -> None:
@@ -105,6 +111,63 @@ def print_arrow() -> None:
 def print_blank() -> None:
     """Print a blank line."""
     log()
+
+
+################################################################################
+# File Logging
+################################################################################
+
+
+def _close_log() -> None:
+    """Close the log file handle if open."""
+    global _log_fp
+    if _log_fp is not None:
+        _log_fp.close()
+        _log_fp = None
+
+
+def _rotate_log() -> None:
+    """Trim the log file to TRIM_TO_LINES lines when it exceeds MAX_LOG_LINES."""
+    global _log_fp, _log_line_count
+    _close_log()
+    try:
+        with open(_log_file_path, "r") as f:
+            lines = f.readlines()
+        keep = lines[-TRIM_TO_LINES:]
+        with open(_log_file_path, "w") as f:
+            f.writelines(keep)
+    except (OSError, IOError):
+        pass
+    _log_fp = open(_log_file_path, "a")
+    _log_line_count = TRIM_TO_LINES
+
+
+def file_log(message: str) -> None:
+    """Write a timestamped line to the log file. Ignores empty messages."""
+    global _log_fp, _log_line_count
+    if _log_fp is None or message == "":
+        return
+    line = f"{datetime.now():%Y-%m-%d %H:%M:%S} {message}\n"
+    _log_fp.write(line)
+    _log_fp.flush()
+    _log_line_count += 1
+    if _log_line_count > MAX_LOG_LINES:
+        _rotate_log()
+
+
+def init_logging() -> None:
+    """Initialize the log file: count existing lines and open for appending."""
+    global _log_fp, _log_line_count, _log_file_path
+    _log_file_path = os.path.join(SCRIPT_DIR, "bmtc_tracker.log")
+    if os.path.isfile(_log_file_path):
+        try:
+            with open(_log_file_path, "r") as f:
+                for _ in f:
+                    _log_line_count += 1
+        except (OSError, IOError):
+            _log_line_count = 0
+    _log_fp = open(_log_file_path, "a")
+    atexit.register(_close_log)
 
 
 ################################################################################
@@ -581,6 +644,10 @@ _travel_alert_fired: dict[str, bool] = {}
 _was_idle = False
 _last_good_refresh: Optional[datetime] = None
 
+_log_fp: Optional[io.TextIOWrapper] = None
+_log_line_count: int = 0
+_log_file_path: str = ""
+
 
 ################################################################################
 # Notifications
@@ -1007,6 +1074,8 @@ def main() -> None:
 
     _verbose = args.verbose
     _show_http_msgs = args.show_http_msgs
+
+    init_logging()
 
     config_path = find_config()
     config = load_config(config_path)
