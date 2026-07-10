@@ -419,6 +419,7 @@ def format_wait_duration(seconds: float) -> str:
 
 _stale_notified = False
 _travel_alert_fired: dict[str, bool] = {}
+_was_idle = False
 
 
 ################################################################################
@@ -496,6 +497,7 @@ def check_tracking(
     trip_data: dict[str, Any],
     bus_num: str,
     offline_after: timedelta,
+    is_idle: bool = False,
 ) -> bool:
     """
     Evaluate the freshness of tracking data.
@@ -505,6 +507,9 @@ def check_tracking(
 
     Generates exactly ONE notification when tracking goes stale, and
     clears it when tracking resumes.
+
+    When *is_idle* is True, the "Bus is between" segment section is
+    omitted (stops are N/A when no trip is active).
 
     Returns True if tracking is OK, False if stale.
     """
@@ -532,8 +537,6 @@ def check_tracking(
     now = datetime.now()
     diff = now - last_refresh
 
-    previous_stop = loc.get("previousstop", "N/A") or "N/A"
-    next_stop = loc.get("nextstop", "N/A") or "N/A"
     latitude = loc.get("latitude", "N/A")
     longitude = loc.get("longitude", "N/A")
     heading = loc.get("heading", "") or ""
@@ -544,18 +547,22 @@ def check_tracking(
     log(f"Current Time  : {now}")
     log(f"Difference    : {format_timedelta(diff)}")
     log()
-    log("Bus is between:")
-    log(f"  {previous_stop}")
-    log("  \u2193")
-    log(f"  {next_stop}")
-    if heading:
-        log(f"Heading       : {heading}")
-    if location_name:
-        log(f"Location      : {location_name}")
-    if trip_status:
-        log(f"Trip Status   : {trip_status}")
-    log(f"Coordinates   : {latitude}, {longitude}")
-    log()
+
+    if not is_idle:
+        previous_stop = loc.get("previousstop", "N/A") or "N/A"
+        next_stop = loc.get("nextstop", "N/A") or "N/A"
+        log("Bus is between:")
+        log(f"  {previous_stop}")
+        log("  \u2193")
+        log(f"  {next_stop}")
+        if heading:
+            log(f"Heading       : {heading}")
+        if location_name:
+            log(f"Location      : {location_name}")
+        if trip_status:
+            log(f"Trip Status   : {trip_status}")
+        log(f"Coordinates   : {latitude}, {longitude}")
+        log()
 
     is_stale = diff > offline_after
 
@@ -565,7 +572,7 @@ def check_tracking(
             msg = (
                 f"Bus {bus_num} tracking is stale. "
                 f"Last refresh: {last_refresh_str}. "
-                f"Location: {location_name or previous_stop}"
+                f"Location: {location_name or 'Unknown'}"
             )
             notify_stale(msg)
             _stale_notified = True
@@ -694,6 +701,50 @@ def check_travel_alerts(
 
 
 ################################################################################
+# Idle State
+################################################################################
+
+
+def bus_is_idle(trip_data: dict[str, Any]) -> bool:
+    """Return True when the bus has no active trip (RouteDetails is empty)."""
+    route_details = trip_data.get("RouteDetails")
+    if not isinstance(route_details, list):
+        return True
+    return len(route_details) == 0
+
+
+def print_idle_status(trip_data: dict[str, Any]) -> None:
+    """Print the idle status block showing current location."""
+    loc = None
+    live = trip_data.get("LiveLocation")
+    if live and isinstance(live, list) and len(live) > 0:
+        loc = live[0]
+
+    location_name = "Unknown"
+    if loc:
+        location_name = loc.get("location", "") or "Unknown"
+
+        lat = loc.get("latitude", "")
+        lon = loc.get("longitude", "")
+        if lat != "N/A" and lon != "N/A":
+            location_name = f"{location_name} ({lat}, {lon})"
+
+    log_separator()
+    log()
+    log("Bus Status")
+    log()
+    log("Idle (No Active Trip)")
+    log()
+    log("Current Location")
+    log(location_name)
+    log()
+    log("Waiting for next trip...")
+    log()
+    log_separator()
+    log()
+
+
+################################################################################
 # Monitoring
 ################################################################################
 
@@ -707,6 +758,8 @@ def monitor(
     travel_alerts: Optional[list[dict[str, Any]]] = None,
 ) -> None:
     """Perform a single poll of vehicle tracking data."""
+    global _was_idle
+
     log_separator()
     log(datetime.now().strftime("%a %b %d %H:%M:%S"))
     log(f"Checking {bus_num}")
@@ -719,10 +772,20 @@ def monitor(
         log()
         return
 
-    check_tracking(trip_data, bus_num, offline_after)
+    idle = bus_is_idle(trip_data)
 
-    if travel_alerts:
-        check_travel_alerts(trip_data, travel_alerts)
+    check_tracking(trip_data, bus_num, offline_after, is_idle=idle)
+
+    if idle:
+        if not _was_idle:
+            _travel_alert_fired.clear()
+            _was_idle = True
+        print_idle_status(trip_data)
+    else:
+        if _was_idle:
+            _was_idle = False
+        if travel_alerts:
+            check_travel_alerts(trip_data, travel_alerts)
 
 
 ################################################################################
