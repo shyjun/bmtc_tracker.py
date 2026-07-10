@@ -1,7 +1,7 @@
 {
     "bus_number": "KA57F4864",
     "poll_interval_secs": 10,
-    "offline_after_mins": 5,
+    "offline_after_mins": 3,
     "log": {
         "enabled": true,
         "file": "bmtc_tracker.log",
@@ -15,8 +15,8 @@
             "days": ["Mon","Tue","Wed","Thu","Fri"],
             "start": "07:00",
             "end": "08:30",
-            "source": "KR Market (Kalasipalya)",
-            "destination": "Depot-42 Gate Arrival",
+            "source": "Muttanalluru",
+            "destination": "KR Market (Kalasipalya)",
             "alert": {
                 "alert_start_location": "Agara Junction",
                 "alert_end_location": "Bellanduru Gate SJP Road",
@@ -29,8 +29,8 @@
             "days": ["Mon","Tue","Wed","Thu","Fri"],
             "start": "14:00",
             "end": "17:00",
-            "source": "Depot-42 Gate Departure",
-            "destination": "KR Market (Kalasipalya)",
+            "source": "KR Market (Kalasipalya)",
+            "destination": "Muttanalluru",
             "alert": {
                 "alert_start_location": "St. John's Hospital",
                 "alert_end_location": "Koramangala Water Tank",
