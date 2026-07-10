@@ -28,7 +28,7 @@ import requests
 # Constants
 ################################################################################
 
-VERSION = "1.0.0"
+VERSION = "0.9.0"
 HTTP_TIMEOUT = 10
 LIST_VEHICLES_URL = "https://bmtcmobileapi.karnataka.gov.in/WebAPI/ListVehicles"
 TRIP_DETAILS_URL = "https://bmtcmobileapi.karnataka.gov.in/WebAPI/VehicleTripDetails_v2"
@@ -49,7 +49,16 @@ BASH_CMDS_DIR = "/home/snarangaprath/WORK/BASH_CMDS"
 
 
 ################################################################################
-# Logging
+# Tracker State
+################################################################################
+
+TRACKER_RUNNING = "running"
+TRACKER_IDLE = "idle"
+TRACKER_OFFLINE = "offline"
+
+
+################################################################################
+# Logging Helpers
 ################################################################################
 
 _verbose = False
@@ -67,8 +76,35 @@ def log_error(message: str) -> None:
 
 
 def log_separator() -> None:
-    """Print the standard separator line."""
+    """Print a separator line."""
     log("=" * 56)
+
+
+def print_header(title: str) -> None:
+    """Print a section header with separator."""
+    log_separator()
+    log(title)
+    log_separator()
+
+
+def print_section(title: str) -> None:
+    """Print a labelled section."""
+    log(title)
+
+
+def print_key_value(key: str, value: Any) -> None:
+    """Print a labelled value pair."""
+    log(f"{key:<18}: {value}")
+
+
+def print_arrow() -> None:
+    """Print a downward arrow."""
+    log("  \u2193")
+
+
+def print_blank() -> None:
+    """Print a blank line."""
+    log()
 
 
 ################################################################################
@@ -186,7 +222,7 @@ def validate_config(config: dict[str, Any]) -> None:
 
 
 ################################################################################
-# BMTC APIs
+# BMTC API Helpers
 ################################################################################
 
 
@@ -197,7 +233,7 @@ def _api_post(
 ) -> Any:
     """Make an API POST request with standard headers and timeout."""
     if _show_http_msgs:
-        log()
+        print_blank()
         log("--- HTTP REQUEST ---")
         log(f"POST {url}")
         log("Headers:")
@@ -210,7 +246,7 @@ def _api_post(
     resp = session.post(url, headers=HEADERS, json=payload, timeout=HTTP_TIMEOUT)
 
     if _show_http_msgs:
-        log()
+        print_blank()
         log("--- HTTP RESPONSE ---")
         log(f"Status: {resp.status_code}")
         log("Headers:")
@@ -227,6 +263,30 @@ def _api_post(
 
     resp.raise_for_status()
     return resp.json()
+
+
+def fetch_trip_details(
+    session: requests.Session, vehicle_id: int
+) -> Optional[dict[str, Any]]:
+    """
+    Fetch live trip details for a given vehicle ID.
+
+    Retries exactly once on failure.
+    Returns the parsed JSON dict, or None if both attempts fail.
+    """
+    payload: dict[str, Any] = {"vehicleId": vehicle_id}
+    for attempt in range(2):
+        try:
+            return _api_post(session, TRIP_DETAILS_URL, payload)
+        except (requests.RequestException, json.JSONDecodeError) as e:
+            if attempt == 0:
+                if _verbose:
+                    log_error(f"Retrying after error: {e}")
+                continue
+            if _verbose:
+                log_error(f"Error: trip details fetch failed: {e}")
+            return None
+    return None
 
 
 def resolve_vehicle_id(session: requests.Session, bus_num: str) -> int:
@@ -267,21 +327,129 @@ def resolve_vehicle_id(session: requests.Session, bus_num: str) -> int:
     sys.exit(1)
 
 
-def fetch_trip_details(
-    session: requests.Session, vehicle_id: int
-) -> Optional[dict[str, Any]]:
-    """
-    Fetch live trip details for a given vehicle ID.
+################################################################################
+# BMTC Response Accessors
+################################################################################
 
-    Returns the parsed JSON dict, or None on error.
+
+def get_route_details(trip_data: dict[str, Any]) -> list[dict[str, Any]]:
+    """Extract RouteDetails list from a trip data response."""
+    raw = trip_data.get("RouteDetails")
+    if isinstance(raw, list):
+        return raw
+    return []
+
+
+def get_live_location(trip_data: dict[str, Any]) -> list[dict[str, Any]]:
+    """Extract LiveLocation list from a trip data response."""
+    raw = trip_data.get("LiveLocation")
+    if isinstance(raw, list):
+        return raw
+    return []
+
+
+def get_first_route(trip_data: dict[str, Any]) -> Optional[dict[str, Any]]:
+    """Return the first RouteDetails entry, or None."""
+    routes = get_route_details(trip_data)
+    if routes:
+        return routes[0]
+    return None
+
+
+def get_first_location(trip_data: dict[str, Any]) -> Optional[dict[str, Any]]:
+    """Return the first LiveLocation entry, or None."""
+    locations = get_live_location(trip_data)
+    if locations:
+        return locations[0]
+    return None
+
+
+def get_source_station(trip_data: dict[str, Any]) -> Optional[str]:
+    """Return the source station from RouteDetails, or None."""
+    route = get_first_route(trip_data)
+    if route:
+        return route.get("sourcestation")
+    return None
+
+
+def get_destination_station(trip_data: dict[str, Any]) -> Optional[str]:
+    """Return the destination station from RouteDetails, or None."""
+    route = get_first_route(trip_data)
+    if route:
+        return route.get("destinationstation")
+    return None
+
+
+def get_previous_stop(trip_data: dict[str, Any]) -> Optional[str]:
+    """Return the previous stop from LiveLocation, or None."""
+    loc = get_first_location(trip_data)
+    if loc:
+        return loc.get("previousstop")
+    return None
+
+
+def get_next_stop(trip_data: dict[str, Any]) -> Optional[str]:
+    """Return the next stop from LiveLocation, or None."""
+    loc = get_first_location(trip_data)
+    if loc:
+        return loc.get("nextstop")
+    return None
+
+
+################################################################################
+# TripInfo
+################################################################################
+
+
+def extract_trip_info(trip_data: dict[str, Any]) -> dict[str, Any]:
     """
-    payload: dict[str, Any] = {"vehicleId": vehicle_id}
-    try:
-        return _api_post(session, TRIP_DETAILS_URL, payload)
-    except (requests.RequestException, json.JSONDecodeError) as e:
-        if _verbose:
-            log_error(f"Error: trip details fetch failed: {e}")
-        return None
+    Extract all relevant fields from a raw BMTC API response into a flat dict.
+
+    This isolates the rest of the code from the BMTC JSON structure.
+    """
+    loc = get_first_location(trip_data)
+    route = get_first_route(trip_data)
+
+    last_refresh_str = (loc.get("lastrefreshon") if loc else None) or ""
+    last_refresh = parse_timestamp(last_refresh_str) if last_refresh_str else None
+
+    info: dict[str, Any] = {
+        "source": route.get("sourcestation") if route else None,
+        "destination": route.get("destinationstation") if route else None,
+        "previous_stop": loc.get("previousstop") if loc else None,
+        "next_stop": loc.get("nextstop") if loc else None,
+        "location": loc.get("location") if loc else None,
+        "latitude": loc.get("latitude") if loc else None,
+        "longitude": loc.get("longitude") if loc else None,
+        "heading": loc.get("heading") if loc else None,
+        "trip_status": loc.get("trip_status") if loc else None,
+        "last_refresh_str": last_refresh_str,
+        "last_refresh": last_refresh,
+        "is_idle": len(get_route_details(trip_data)) == 0,
+        "_raw_location_valid": loc is not None,
+    }
+    return info
+
+
+def determine_tracker_state(
+    trip_info: dict[str, Any],
+    offline_after: timedelta,
+) -> str:
+    """
+    Return TRACKER_RUNNING, TRACKER_IDLE, or TRACKER_OFFLINE.
+
+    Offline takes precedence: if last_refresh is stale, the tracker is offline
+    regardless of RouteDetails.
+    """
+    if trip_info["last_refresh"] is not None:
+        diff = datetime.now() - trip_info["last_refresh"]
+        if diff > offline_after:
+            return TRACKER_OFFLINE
+
+    if trip_info["is_idle"]:
+        return TRACKER_IDLE
+
+    return TRACKER_RUNNING
 
 
 ################################################################################
@@ -494,85 +662,74 @@ def notify_resumed() -> None:
 
 
 def check_tracking(
-    trip_data: dict[str, Any],
+    trip_info: dict[str, Any],
     bus_num: str,
     offline_after: timedelta,
-    is_idle: bool = False,
 ) -> bool:
     """
     Evaluate the freshness of tracking data.
 
-    Compares *lastrefreshon* against the current time.  If the difference
+    Compares *last_refresh* against the current time.  If the difference
     exceeds *offline_after*, tracking is considered stale.
 
     Generates exactly ONE notification when tracking goes stale, and
     clears it when tracking resumes.
 
-    When *is_idle* is True, the "Bus is between" segment section is
-    omitted (stops are N/A when no trip is active).
-
     Returns True if tracking is OK, False if stale.
     """
     global _stale_notified
 
-    live = trip_data.get("LiveLocation")
-    if not live or not isinstance(live, list) or len(live) == 0:
+    if not trip_info["_raw_location_valid"]:
         log("No LiveLocation data available.")
-        log()
+        print_blank()
         return True
 
-    loc = live[0]
-    last_refresh_str = loc.get("lastrefreshon", "") or ""
-    if not last_refresh_str:
+    if not trip_info["last_refresh_str"]:
         log("No 'lastrefreshon' field in response.")
-        log()
+        print_blank()
         return True
 
-    last_refresh = parse_timestamp(last_refresh_str)
-    if last_refresh is None:
-        log(f"Could not parse lastrefreshon: {last_refresh_str}")
-        log()
+    if trip_info["last_refresh"] is None:
+        log(f"Could not parse lastrefreshon: {trip_info['last_refresh_str']}")
+        print_blank()
         return True
 
     now = datetime.now()
-    diff = now - last_refresh
+    diff = now - trip_info["last_refresh"]
 
-    latitude = loc.get("latitude", "N/A")
-    longitude = loc.get("longitude", "N/A")
-    heading = loc.get("heading", "") or ""
-    location_name = loc.get("location", "") or ""
-    trip_status = loc.get("trip_status", "") or ""
+    print_key_value("Last Refresh", trip_info["last_refresh"])
+    print_key_value("Current Time", now)
+    print_key_value("Difference", format_timedelta(diff))
+    print_blank()
 
-    log(f"Last Refresh  : {last_refresh}")
-    log(f"Current Time  : {now}")
-    log(f"Difference    : {format_timedelta(diff)}")
-    log()
-
-    if not is_idle:
-        previous_stop = loc.get("previousstop", "N/A") or "N/A"
-        next_stop = loc.get("nextstop", "N/A") or "N/A"
+    if not trip_info["is_idle"]:
+        prev_stop = trip_info["previous_stop"] or "N/A"
+        next_stop = trip_info["next_stop"] or "N/A"
         log("Bus is between:")
-        log(f"  {previous_stop}")
-        log("  \u2193")
+        log(f"  {prev_stop}")
+        print_arrow()
         log(f"  {next_stop}")
-        if heading:
-            log(f"Heading       : {heading}")
-        if location_name:
-            log(f"Location      : {location_name}")
-        if trip_status:
-            log(f"Trip Status   : {trip_status}")
-        log(f"Coordinates   : {latitude}, {longitude}")
-        log()
+        if trip_info["heading"]:
+            print_key_value("Heading", trip_info["heading"])
+        if trip_info["location"]:
+            print_key_value("Location", trip_info["location"])
+        if trip_info["trip_status"]:
+            print_key_value("Trip Status", trip_info["trip_status"])
+        lat = trip_info["latitude"] or "N/A"
+        lon = trip_info["longitude"] or "N/A"
+        print_key_value("Coordinates", f"{lat}, {lon}")
+        print_blank()
 
     is_stale = diff > offline_after
 
     if is_stale:
         log("Tracking appears stale")
         if not _stale_notified:
+            loc_name = trip_info["location"] or "Unknown"
             msg = (
                 f"Bus {bus_num} tracking is stale. "
-                f"Last refresh: {last_refresh_str}. "
-                f"Location: {location_name or 'Unknown'}"
+                f"Last refresh: {trip_info['last_refresh_str']}. "
+                f"Location: {loc_name}"
             )
             notify_stale(msg)
             _stale_notified = True
@@ -582,7 +739,7 @@ def check_tracking(
             notify_resumed()
             _stale_notified = False
 
-    log()
+    print_blank()
     return not is_stale
 
 
@@ -599,51 +756,58 @@ def _normalize(name: Optional[str]) -> str:
     return _re.sub(r"\s+", " ", name.strip().lower())
 
 
-def matches_segment(
-    actual_prev: Optional[str],
-    actual_next: Optional[str],
-    expected_start: str,
-    expected_end: str,
-) -> bool:
-    """Check if the actual bus segment matches the expected alert segment."""
+def matches_route(trip_info: dict[str, Any], alert: dict[str, Any]) -> bool:
+    """Check if the current trip route matches the alert source/destination."""
     return (
-        _normalize(actual_prev) == _normalize(expected_start)
-        and _normalize(actual_next) == _normalize(expected_end)
+        _normalize(trip_info["source"]) == _normalize(alert["source"])
+        and _normalize(trip_info["destination"]) == _normalize(alert["destination"])
     )
+
+
+def matches_segment(trip_info: dict[str, Any], alert: dict[str, Any]) -> bool:
+    """Check if the current bus segment matches the alert start/end locations."""
+    return (
+        _normalize(trip_info["previous_stop"]) == _normalize(alert["alert_start_location"])
+        and _normalize(trip_info["next_stop"]) == _normalize(alert["alert_end_location"])
+    )
+
+
+def matches_day(trip_info: dict[str, Any], alert: dict[str, Any]) -> bool:
+    """Check if today's weekday is in the alert's configured days."""
+    return datetime.now().strftime("%a") in alert["days"]
 
 
 def _fire_travel_alert(alert: dict[str, Any]) -> None:
     """Send the travel alert notification and log the formatted block."""
-    name = alert["name"]
     log_separator()
-    log()
-    log("TRAVEL ALERT")
-    log()
-    log(f"Alert Name")
-    log(f"{name}")
-    log()
+    print_blank()
+    print_section("TRAVEL ALERT")
+    print_blank()
+    log("Alert Name")
+    log(alert["name"])
+    print_blank()
     log("Source")
-    log(f"{alert['source']}")
-    log()
+    log(alert["source"])
+    print_blank()
     log("Destination")
-    log(f"{alert['destination']}")
-    log()
+    log(alert["destination"])
+    print_blank()
     log("Bus Segment")
-    log(f"{alert['alert_start_location']}")
-    log("\u2193")
-    log(f"{alert['alert_end_location']}")
-    log()
+    log(alert["alert_start_location"])
+    print_arrow()
+    log(alert["alert_end_location"])
+    print_blank()
     log("Notification")
-    log(f"{alert['notification']}")
-    log()
+    log(alert["notification"])
+    print_blank()
     log_separator()
-    log()
+    print_blank()
 
     notify_stale(alert["notification"])
 
 
 def check_travel_alerts(
-    trip_data: dict[str, Any],
+    trip_info: dict[str, Any],
     travel_alerts: list[dict[str, Any]],
 ) -> None:
     """Evaluate every enabled travel alert against the current trip data."""
@@ -651,48 +815,23 @@ def check_travel_alerts(
 
     if not travel_alerts:
         return
-
-    route_details = trip_data.get("RouteDetails")
-    live = trip_data.get("LiveLocation")
-
-    if (
-        not route_details
-        or not isinstance(route_details, list)
-        or len(route_details) == 0
-    ):
+    if trip_info["is_idle"]:
         return
-    if not live or not isinstance(live, list) or len(live) == 0:
+    if not trip_info["source"] or not trip_info["destination"]:
         return
-
-    route = route_details[0]
-    loc = live[0]
-
-    route_source = route.get("sourcestation")
-    route_dest = route.get("destinationstation")
-    actual_prev = loc.get("previousstop")
-    actual_next = loc.get("nextstop")
-
-    if not route_source or not route_dest:
-        return
-
-    now = datetime.now()
-    today = now.strftime("%a")
 
     for alert in travel_alerts:
         if not alert.get("enabled", False):
             continue
-        if today not in alert["days"]:
+
+        if not matches_day(trip_info, alert):
             _travel_alert_fired.pop(alert["name"], None)
             continue
 
-        source_match = _normalize(route_source) == _normalize(alert["source"])
-        dest_match = _normalize(route_dest) == _normalize(alert["destination"])
-        segment_match = matches_segment(
-            actual_prev, actual_next,
-            alert["alert_start_location"], alert["alert_end_location"],
-        )
+        route_ok = matches_route(trip_info, alert)
+        segment_ok = matches_segment(trip_info, alert)
 
-        if source_match and dest_match and segment_match:
+        if route_ok and segment_ok:
             if not _travel_alert_fired.get(alert["name"], False):
                 _fire_travel_alert(alert)
                 _travel_alert_fired[alert["name"]] = True
@@ -705,43 +844,29 @@ def check_travel_alerts(
 ################################################################################
 
 
-def bus_is_idle(trip_data: dict[str, Any]) -> bool:
-    """Return True when the bus has no active trip (RouteDetails is empty)."""
-    route_details = trip_data.get("RouteDetails")
-    if not isinstance(route_details, list):
-        return True
-    return len(route_details) == 0
-
-
-def print_idle_status(trip_data: dict[str, Any]) -> None:
+def print_idle_status(trip_info: dict[str, Any]) -> None:
     """Print the idle status block showing current location."""
-    loc = None
-    live = trip_data.get("LiveLocation")
-    if live and isinstance(live, list) and len(live) > 0:
-        loc = live[0]
-
     location_name = "Unknown"
-    if loc:
-        location_name = loc.get("location", "") or "Unknown"
-
-        lat = loc.get("latitude", "")
-        lon = loc.get("longitude", "")
-        if lat != "N/A" and lon != "N/A":
+    if trip_info["_raw_location_valid"]:
+        location_name = trip_info["location"] or "Unknown"
+        lat = trip_info["latitude"]
+        lon = trip_info["longitude"]
+        if lat is not None and lon is not None:
             location_name = f"{location_name} ({lat}, {lon})"
 
     log_separator()
-    log()
-    log("Bus Status")
-    log()
+    print_blank()
+    print_section("Bus Status")
+    print_blank()
     log("Idle (No Active Trip)")
-    log()
+    print_blank()
     log("Current Location")
     log(location_name)
-    log()
+    print_blank()
     log("Waiting for next trip...")
-    log()
+    print_blank()
     log_separator()
-    log()
+    print_blank()
 
 
 ################################################################################
@@ -764,28 +889,36 @@ def monitor(
     log(datetime.now().strftime("%a %b %d %H:%M:%S"))
     log(f"Checking {bus_num}")
     log_separator()
-    log()
+    print_blank()
 
     trip_data = fetch_trip_details(session, vehicle_id)
     if trip_data is None:
         log(f"Network/API error. Retrying in {poll_interval} seconds...")
-        log()
+        print_blank()
         return
 
-    idle = bus_is_idle(trip_data)
+    trip_info = extract_trip_info(trip_data)
+    state = determine_tracker_state(trip_info, offline_after)
 
-    check_tracking(trip_data, bus_num, offline_after, is_idle=idle)
+    if state == TRACKER_OFFLINE:
+        check_tracking(trip_info, bus_num, offline_after)
+        return
 
-    if idle:
+    if state == TRACKER_IDLE:
+        check_tracking(trip_info, bus_num, offline_after)
         if not _was_idle:
             _travel_alert_fired.clear()
             _was_idle = True
-        print_idle_status(trip_data)
-    else:
+        print_idle_status(trip_info)
+        return
+
+    if state == TRACKER_RUNNING:
+        check_tracking(trip_info, bus_num, offline_after)
         if _was_idle:
             _was_idle = False
         if travel_alerts:
-            check_travel_alerts(trip_data, travel_alerts)
+            check_travel_alerts(trip_info, travel_alerts)
+        return
 
 
 ################################################################################
@@ -799,42 +932,57 @@ def print_startup_banner(
     vehicle_id: int,
     always_track: bool,
 ) -> None:
-    """Print a one-time startup summary."""
+    """Print a one-time startup summary with full configuration details."""
     log_separator()
     log(f"BMTC Bus Tracker v{VERSION}")
     log_separator()
-    log()
-    log(f"Bus Number          : {bus_num}")
-    log(f"Vehicle ID          : {vehicle_id}")
-    log()
-    log(f"Poll Interval       : {config['poll_interval_secs']} sec")
-    log(f"Offline Alert       : {config['offline_after_mins']} min")
-    log()
+    print_blank()
+    print_key_value("Bus Number", bus_num)
+    print_key_value("Vehicle ID", vehicle_id)
+    print_blank()
+    print_key_value("Poll Interval", f"{config['poll_interval_secs']} sec")
+    print_key_value("Offline Alert", f"{config['offline_after_mins']} min")
+    print_blank()
 
     if always_track:
         log("Mode                : Continuous tracking (schedule ignored)")
     else:
-        log("Schedules")
+        print_section("Schedules")
         for entry in config["schedule"]:
             if not entry.get("enabled", False):
                 continue
             days_str = format_schedule_days(entry["days"])
             label = f"  {entry['name']:<20}"
             log(f"{label}: {days_str} {entry['start']} - {entry['end']}")
+    print_blank()
 
     travel_alerts = config.get("travel_alerts", [])
     if travel_alerts:
-        log("Travel Alerts")
-        for entry in travel_alerts:
+        print_section("Travel Alerts")
+        for i, entry in enumerate(travel_alerts, 1):
             if not entry.get("enabled", False):
                 continue
             days_str = format_schedule_days(entry["days"])
-            label = f"  {entry['name']:<20}"
-            log(f"{label}: {days_str} {entry['source']} \u2192 {entry['destination']}")
-        log()
+            print_blank()
+            log(f"{i})")
+            log(entry["name"])
+            print_blank()
+            log(entry["source"])
+            print_arrow()
+            log(entry["destination"])
+            print_blank()
+            log("Alert Segment")
+            log(entry["alert_start_location"])
+            print_arrow()
+            log(entry["alert_end_location"])
+            print_blank()
+            log("Notification")
+            log(entry["notification"])
+            if i < len(travel_alerts):
+                log("-" * 56)
 
     log_separator()
-    log()
+    print_blank()
 
 
 ################################################################################
@@ -886,23 +1034,23 @@ def main() -> None:
             if active != _active_schedule:
                 if _active_schedule is not None:
                     log(f"{_active_schedule} Schedule Ended")
-                    log()
+                    print_blank()
                 log(f"{active} Schedule Started")
-                log()
+                print_blank()
                 _active_schedule = active
             monitor(session, vehicle_id, bus_num, offline_after, poll_interval, travel_alerts)
             time.sleep(poll_interval)
         else:
             if _active_schedule is not None:
                 log(f"{_active_schedule} Schedule Ended")
-                log()
+                print_blank()
                 _active_schedule = None
 
             next_window = find_next_window(now, schedule)
             if next_window is None:
                 log("No upcoming monitoring windows found in the next 14 days.")
                 log("Sleeping 1 hour.")
-                log()
+                print_blank()
                 time.sleep(3600)
                 continue
 
@@ -912,20 +1060,20 @@ def main() -> None:
 
             wait_str = format_wait_duration(sleep_secs)
             log_separator()
-            log()
+            print_blank()
             log("Outside Monitoring Window")
-            log()
-            log(f"Current Time")
+            print_blank()
+            log("Current Time")
             log(f"{now.strftime('%a %b %d %H:%M:%S')}")
-            log()
+            print_blank()
             log("Next Monitoring Window")
             log(f"{next_window.strftime('%a %b %d %H:%M:%S')}")
-            log()
+            print_blank()
             log("Sleeping For")
             log(wait_str)
-            log()
+            print_blank()
             log_separator()
-            log()
+            print_blank()
             time.sleep(sleep_secs)
 
 
