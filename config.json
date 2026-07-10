@@ -32,8 +32,8 @@
             "source": "KR Market (Kalasipalya)",
             "destination": "Muttanalluru",
             "alert": {
-                "alert_start_location": "Hosur Road Junction",
-                "alert_end_location": "Koramangala Water Tank",
+                "alert_start_location": "St francis College",
+                "alert_end_location": "Koramangala 1st Block",
                 "notification": "Time to leave office! Your bus is approaching."
             }
         }

@@ -1046,9 +1046,6 @@ def check_travel_alerts(
                 notify_resumed()
                 _travel_alert_fired.pop(entry["name"], None)
                 entry["_state"] = "COMPLETED"
-            elif not approaching and not at_end and was_fired:
-                notify_resumed()
-                _travel_alert_fired.pop(entry["name"], None)
             elif not approaching and not at_end and not was_fired:
                 _check_alert_positional(trip_info, trip_data, entry)
         else:
