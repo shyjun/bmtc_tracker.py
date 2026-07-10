@@ -18,9 +18,9 @@
             "source": "Muttanalluru",
             "destination": "KR Market (Kalasipalya)",
             "alert": {
-                "alert_start_location": "Agara Junction",
-                "alert_end_location": "Bellanduru Gate SJP Road",
-                "notification": "Time to leave for the bus stop!"
+                "alert_start_location": "Muttanalluru",
+                "alert_end_location": "Kaggalipura Cross",
+                "notification": "Time to leave to office. Your bus is approaching!"
             }
         },
         {
@@ -32,9 +32,9 @@
             "source": "KR Market (Kalasipalya)",
             "destination": "Muttanalluru",
             "alert": {
-                "alert_start_location": "St francis College",
-                "alert_end_location": "Koramangala 1st Block",
-                "notification": "Time to leave office! Your bus is approaching."
+                "alert_start_location": "Muneshwara Devasthana",
+                "alert_end_location": "Agara Junction",
+                "notification": "Time to leave to home! Your bus is approaching."
             }
         }
     ]
