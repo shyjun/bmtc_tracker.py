@@ -1,6 +1,6 @@
 {
     "bus_number": "KA57F4864",
-    "poll_interval_secs": 30,
+    "poll_interval_secs": 10,
     "offline_after_mins": 5,
     "schedule": [
         {

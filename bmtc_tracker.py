@@ -6,7 +6,7 @@ Monitors a BMTC bus by calling BMTC's internal APIs and generates
 notifications when the tracking becomes stale.
 
 Usage:
-    python bmtc_tracker.py [-h] [-v] [--bus-num=KA57F4864]
+    python bmtc_tracker.py [-h] [-v] [--version] [--bus-num=KA57F4864] [--always-track]
 """
 
 import json
@@ -19,7 +19,6 @@ from argparse import ArgumentParser
 from datetime import datetime, timedelta
 from typing import Any, Optional
 
-# Suppress noisy requests/urllib3 dependency version warning before it fires
 warnings.filterwarnings("ignore", message=".*urllib3.*doesn't match a supported version")
 
 import requests
@@ -30,6 +29,7 @@ import requests
 ################################################################################
 
 VERSION = "1.0.0"
+HTTP_TIMEOUT = 10
 LIST_VEHICLES_URL = "https://bmtcmobileapi.karnataka.gov.in/WebAPI/ListVehicles"
 TRIP_DETAILS_URL = "https://bmtcmobileapi.karnataka.gov.in/WebAPI/VehicleTripDetails_v2"
 
@@ -46,6 +46,28 @@ HEADERS = {
 DAY_NAMES = {"Mon": 0, "Tue": 1, "Wed": 2, "Thu": 3, "Fri": 4, "Sat": 5, "Sun": 6}
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 BASH_CMDS_DIR = "/home/snarangaprath/WORK/BASH_CMDS"
+
+
+################################################################################
+# Logging
+################################################################################
+
+_verbose = False
+
+
+def log(message: str = "") -> None:
+    """Print a message to stdout."""
+    print(message)
+
+
+def log_error(message: str) -> None:
+    """Print an error message to stderr."""
+    print(message, file=sys.stderr)
+
+
+def log_separator() -> None:
+    """Print the standard separator line."""
+    log("=" * 56)
 
 
 ################################################################################
@@ -68,7 +90,7 @@ def find_config() -> str:
     for path in candidates:
         if os.path.isfile(path):
             return path
-    print("Error: config.json not found.", file=sys.stderr)
+    log_error("Error: config.json not found.")
     sys.exit(1)
 
 
@@ -82,7 +104,16 @@ def parse_cli_args() -> Any:
         help="Override bus number from config.json",
     )
     parser.add_argument(
-        "-v", "--version", action="store_true", help="Show version and exit"
+        "-v", "--verbose",
+        action="store_true",
+        dest="verbose",
+        default=False,
+        help="Enable verbose logging",
+    )
+    parser.add_argument(
+        "--version",
+        action="store_true",
+        help="Show version and exit",
     )
     parser.add_argument(
         "--always-track",
@@ -99,33 +130,29 @@ def validate_config(config: dict[str, Any]) -> None:
     required = ["bus_number", "poll_interval_secs", "offline_after_mins", "schedule"]
     for key in required:
         if key not in config:
-            print(f"Error: config.json missing required key '{key}'.", file=sys.stderr)
+            log_error(f"Error: config.json missing required key '{key}'.")
             sys.exit(1)
     if not isinstance(config["schedule"], list) or len(config["schedule"]) == 0:
-        print("Error: config.json 'schedule' must be a non-empty list.", file=sys.stderr)
+        log_error("Error: config.json 'schedule' must be a non-empty list.")
         sys.exit(1)
     for entry in config["schedule"]:
         for key in ("name", "enabled", "days", "start", "end"):
             if key not in entry:
-                print(
-                    f"Error: schedule entry missing '{key}'.", file=sys.stderr
-                )
+                log_error(f"Error: schedule entry missing '{key}'.")
                 sys.exit(1)
         for day in entry["days"]:
             if day not in DAY_NAMES:
-                print(
+                log_error(
                     f"Error: invalid day '{day}' in schedule entry "
-                    f"'{entry['name']}'.",
-                    file=sys.stderr,
+                    f"'{entry['name']}'."
                 )
                 sys.exit(1)
         try:
             datetime.strptime(entry["start"], "%H:%M")
             datetime.strptime(entry["end"], "%H:%M")
         except ValueError:
-            print(
-                f"Error: invalid time format in schedule entry '{entry['name']}'.",
-                file=sys.stderr,
+            log_error(
+                f"Error: invalid time format in schedule entry '{entry['name']}'."
             )
             sys.exit(1)
 
@@ -133,6 +160,17 @@ def validate_config(config: dict[str, Any]) -> None:
 ################################################################################
 # BMTC APIs
 ################################################################################
+
+
+def _api_post(
+    session: requests.Session,
+    url: str,
+    payload: dict[str, Any],
+) -> Any:
+    """Make an API POST request with standard headers and timeout."""
+    resp = session.post(url, headers=HEADERS, json=payload, timeout=HTTP_TIMEOUT)
+    resp.raise_for_status()
+    return resp.json()
 
 
 def resolve_vehicle_id(session: requests.Session, bus_num: str) -> int:
@@ -144,20 +182,18 @@ def resolve_vehicle_id(session: requests.Session, bus_num: str) -> int:
     """
     payload: dict[str, Any] = {"vehicleRegNo": bus_num}
     try:
-        resp = session.post(LIST_VEHICLES_URL, headers=HEADERS, json=payload)
-        resp.raise_for_status()
-        body = resp.json()
+        body = _api_post(session, LIST_VEHICLES_URL, payload)
     except (requests.RequestException, json.JSONDecodeError) as e:
-        print(f"Error: vehicle lookup failed: {e}", file=sys.stderr)
+        log_error(f"Error: vehicle lookup failed: {e}")
         sys.exit(1)
 
     if not isinstance(body, dict):
-        print("Error: unexpected response format from ListVehicles.", file=sys.stderr)
+        log_error("Error: unexpected response format from ListVehicles.")
         sys.exit(1)
 
     vehicles = body.get("data", [])
     if not isinstance(vehicles, list):
-        print("Error: 'data' field is not a list.", file=sys.stderr)
+        log_error("Error: 'data' field is not a list.")
         sys.exit(1)
 
     for vehicle in vehicles:
@@ -167,15 +203,17 @@ def resolve_vehicle_id(session: requests.Session, bus_num: str) -> int:
         if reg_no == bus_num.strip().upper():
             vid = vehicle.get("vehicleid")
             if vid is None:
-                print("Error: vehicle found but 'vehicleid' missing.", file=sys.stderr)
+                log_error("Error: vehicle found but 'vehicleid' missing.")
                 sys.exit(1)
             return int(vid)
 
-    print(f"Error: vehicle '{bus_num}' not found in API response.", file=sys.stderr)
+    log_error(f"Error: vehicle '{bus_num}' not found in API response.")
     sys.exit(1)
 
 
-def fetch_trip_details(session: requests.Session, vehicle_id: int) -> Optional[dict[str, Any]]:
+def fetch_trip_details(
+    session: requests.Session, vehicle_id: int
+) -> Optional[dict[str, Any]]:
     """
     Fetch live trip details for a given vehicle ID.
 
@@ -183,12 +221,10 @@ def fetch_trip_details(session: requests.Session, vehicle_id: int) -> Optional[d
     """
     payload: dict[str, Any] = {"vehicleId": vehicle_id}
     try:
-        resp = session.post(TRIP_DETAILS_URL, headers=HEADERS, json=payload)
-        resp.raise_for_status()
-        data: dict[str, Any] = resp.json()
-        return data
+        return _api_post(session, TRIP_DETAILS_URL, payload)
     except (requests.RequestException, json.JSONDecodeError) as e:
-        print(f"Error: trip details fetch failed: {e}")
+        if _verbose:
+            log_error(f"Error: trip details fetch failed: {e}")
         return None
 
 
@@ -241,7 +277,9 @@ def is_in_window(now: datetime, entry: dict[str, Any]) -> bool:
     return start <= current <= end
 
 
-def find_next_window(now: datetime, schedule: list[dict[str, Any]]) -> Optional[datetime]:
+def find_next_window(
+    now: datetime, schedule: list[dict[str, Any]]
+) -> Optional[datetime]:
     """
     Find the earliest datetime after *now* when any enabled window starts.
 
@@ -264,6 +302,46 @@ def find_next_window(now: datetime, schedule: list[dict[str, Any]]) -> Optional[
     return best
 
 
+def get_active_window_name(now: datetime, schedule: list[dict[str, Any]]) -> Optional[str]:
+    """Return the name of the first enabled schedule window covering *now*, or None."""
+    for entry in schedule:
+        if is_in_window(now, entry):
+            return entry["name"]
+    return None
+
+
+def format_timedelta(delta: timedelta) -> str:
+    """Format a timedelta as a human-readable string (e.g. '3 min 20 sec')."""
+    total = int(delta.total_seconds())
+    minutes = total // 60
+    seconds = total % 60
+    if minutes >= 60:
+        hours = minutes // 60
+        minutes = minutes % 60
+        parts = []
+        if hours:
+            parts.append(f"{hours}h")
+        if minutes:
+            parts.append(f"{minutes}m")
+        if seconds:
+            parts.append(f"{seconds}s")
+        return " ".join(parts) if parts else "0s"
+    if minutes > 0:
+        return f"{minutes} min {seconds} sec"
+    return f"{seconds} sec"
+
+
+def format_schedule_days(days: list[str]) -> str:
+    """Condense a list of day abbreviations into a readable range."""
+    sorted_days = sorted(days, key=lambda d: DAY_NAMES[d])
+    if len(sorted_days) < 2:
+        return "-".join(sorted_days)
+    indices = [DAY_NAMES[d] for d in sorted_days]
+    if indices == list(range(indices[0], indices[-1] + 1)):
+        return f"{sorted_days[0]}-{sorted_days[-1]}"
+    return "-".join(sorted_days)
+
+
 def format_wait_duration(seconds: float) -> str:
     """Format a duration in seconds to a human-readable string."""
     hours = int(seconds // 3600)
@@ -277,6 +355,13 @@ def format_wait_duration(seconds: float) -> str:
     if secs > 0 or not parts:
         parts.append(f"{secs}s")
     return " ".join(parts)
+
+
+################################################################################
+# Notification State
+################################################################################
+
+_stale_notified = False
 
 
 ################################################################################
@@ -307,9 +392,9 @@ def notify_stale(message: str) -> None:
                 capture_output=True,
             )
         except (FileNotFoundError, subprocess.TimeoutExpired) as e:
-            print(f"Warning: buildresultshow.sh failed: {e}")
+            log_error(f"Warning: buildresultshow.sh failed: {e}")
     else:
-        print("Warning: buildresultshow.sh not found; skipping display notification.")
+        log_error("Warning: buildresultshow.sh not found; skipping display notification.")
 
     push_script = _find_script("pushover_msg_send.sh")
     if push_script:
@@ -320,9 +405,9 @@ def notify_stale(message: str) -> None:
                 capture_output=True,
             )
         except (FileNotFoundError, subprocess.TimeoutExpired) as e:
-            print(f"Warning: pushover_msg_send.sh failed: {e}")
+            log_error(f"Warning: pushover_msg_send.sh failed: {e}")
     else:
-        print("Warning: pushover_msg_send.sh not found; skipping push notification.")
+        log_error("Warning: pushover_msg_send.sh not found; skipping push notification.")
 
 
 def notify_resumed() -> None:
@@ -333,7 +418,7 @@ def notify_resumed() -> None:
             subprocess.run([kill_script], timeout=10, capture_output=True)
             return
         except (FileNotFoundError, subprocess.TimeoutExpired) as e:
-            print(f"Warning: kill_buildresultshow.sh failed: {e}")
+            log_error(f"Warning: kill_buildresultshow.sh failed: {e}")
 
     try:
         subprocess.run(
@@ -342,7 +427,7 @@ def notify_resumed() -> None:
             capture_output=True,
         )
     except (FileNotFoundError, subprocess.TimeoutExpired) as e:
-        print(f"Warning: pkill fallback failed: {e}")
+        log_error(f"Warning: pkill fallback failed: {e}")
 
 
 ################################################################################
@@ -350,16 +435,10 @@ def notify_resumed() -> None:
 ################################################################################
 
 
-def print_separator() -> None:
-    """Print the standard separator line."""
-    print("=" * 54)
-
-
 def check_tracking(
     trip_data: dict[str, Any],
     bus_num: str,
     offline_after: timedelta,
-    notified_stale: list[bool],
 ) -> bool:
     """
     Evaluate the freshness of tracking data.
@@ -372,23 +451,25 @@ def check_tracking(
 
     Returns True if tracking is OK, False if stale.
     """
+    global _stale_notified
+
     live = trip_data.get("LiveLocation")
     if not live or not isinstance(live, list) or len(live) == 0:
-        print("No LiveLocation data available.")
-        print()
+        log("No LiveLocation data available.")
+        log()
         return True
 
     loc = live[0]
     last_refresh_str = loc.get("lastrefreshon", "") or ""
     if not last_refresh_str:
-        print("No 'lastrefreshon' field in response.")
-        print()
+        log("No 'lastrefreshon' field in response.")
+        log()
         return True
 
     last_refresh = parse_timestamp(last_refresh_str)
     if last_refresh is None:
-        print(f"Could not parse lastrefreshon: {last_refresh_str}")
-        print()
+        log(f"Could not parse lastrefreshon: {last_refresh_str}")
+        log()
         return True
 
     now = datetime.now()
@@ -402,42 +483,42 @@ def check_tracking(
     location_name = loc.get("location", "") or ""
     trip_status = loc.get("trip_status", "") or ""
 
-    print(f"Last Refresh  : {last_refresh}")
-    print(f"Current Time  : {now}")
-    print(f"Difference    : {diff}")
-    print()
-    print("Bus is between:")
-    print(f"  {previous_stop}")
-    print("  \u2193")
-    print(f"  {next_stop}")
+    log(f"Last Refresh  : {last_refresh}")
+    log(f"Current Time  : {now}")
+    log(f"Difference    : {format_timedelta(diff)}")
+    log()
+    log("Bus is between:")
+    log(f"  {previous_stop}")
+    log("  \u2193")
+    log(f"  {next_stop}")
     if heading:
-        print(f"Heading       : {heading}")
+        log(f"Heading       : {heading}")
     if location_name:
-        print(f"Location      : {location_name}")
+        log(f"Location      : {location_name}")
     if trip_status:
-        print(f"Trip Status   : {trip_status}")
-    print(f"Coordinates   : {latitude}, {longitude}")
-    print()
+        log(f"Trip Status   : {trip_status}")
+    log(f"Coordinates   : {latitude}, {longitude}")
+    log()
 
     is_stale = diff > offline_after
 
     if is_stale:
-        print("Tracking appears stale")
-        if not notified_stale[0]:
+        log("Tracking appears stale")
+        if not _stale_notified:
             msg = (
                 f"Bus {bus_num} tracking is stale. "
                 f"Last refresh: {last_refresh_str}. "
                 f"Location: {location_name or previous_stop}"
             )
             notify_stale(msg)
-            notified_stale[0] = True
+            _stale_notified = True
     else:
-        print("Tracking OK")
-        if notified_stale[0]:
+        log("Tracking OK")
+        if _stale_notified:
             notify_resumed()
-            notified_stale[0] = False
+            _stale_notified = False
 
-    print()
+    log()
     return not is_stale
 
 
@@ -451,22 +532,61 @@ def monitor(
     vehicle_id: int,
     bus_num: str,
     offline_after: timedelta,
-    notified_stale: list[bool],
+    poll_interval: int,
 ) -> None:
     """Perform a single poll of vehicle tracking data."""
-    print_separator()
-    print(datetime.now().strftime("%a %b %d %H:%M:%S"))
-    print(f"Checking {bus_num}")
-    print_separator()
-    print()
+    log_separator()
+    log(datetime.now().strftime("%a %b %d %H:%M:%S"))
+    log(f"Checking {bus_num}")
+    log_separator()
+    log()
 
     trip_data = fetch_trip_details(session, vehicle_id)
     if trip_data is None:
-        print("Trip details unavailable; will retry on next poll.")
-        print()
+        log(f"Network/API error. Retrying in {poll_interval} seconds...")
+        log()
         return
 
-    check_tracking(trip_data, bus_num, offline_after, notified_stale)
+    check_tracking(trip_data, bus_num, offline_after)
+
+
+################################################################################
+# Startup Banner
+################################################################################
+
+
+def print_startup_banner(
+    config: dict[str, Any],
+    bus_num: str,
+    vehicle_id: int,
+    always_track: bool,
+) -> None:
+    """Print a one-time startup summary."""
+    log_separator()
+    log(f"BMTC Bus Tracker v{VERSION}")
+    log_separator()
+    log()
+    log(f"Bus Number          : {bus_num}")
+    log(f"Vehicle ID          : {vehicle_id}")
+    log()
+    log(f"Poll Interval       : {config['poll_interval_secs']} sec")
+    log(f"Offline Alert       : {config['offline_after_mins']} min")
+    log()
+
+    if always_track:
+        log("Mode                : Continuous tracking (schedule ignored)")
+    else:
+        log("Schedules")
+        for entry in config["schedule"]:
+            if not entry.get("enabled", False):
+                continue
+            days_str = format_schedule_days(entry["days"])
+            label = f"  {entry['name']:<20}"
+            log(f"{label}: {days_str} {entry['start']} - {entry['end']}")
+
+    log()
+    log_separator()
+    log()
 
 
 ################################################################################
@@ -476,11 +596,15 @@ def monitor(
 
 def main() -> None:
     """Entry point."""
+    global _verbose
+
     args = parse_cli_args()
 
     if args.version:
-        print(f"bmtc_tracker.py version {VERSION}")
+        log(f"bmtc_tracker.py version {VERSION}")
         sys.exit(0)
+
+    _verbose = args.verbose
 
     config_path = find_config()
     config = load_config(config_path)
@@ -495,33 +619,40 @@ def main() -> None:
     session = requests.Session()
     vehicle_id = resolve_vehicle_id(session, bus_num)
 
-    print(f"Tracking bus {bus_num} (vehicle ID: {vehicle_id})")
-    if always_track:
-        print("Mode: continuous tracking (schedule ignored)")
-    print()
+    print_startup_banner(config, bus_num, vehicle_id, always_track)
 
-    notified_stale: list[bool] = [False]
+    _active_schedule: Optional[str] = None
 
     while True:
         if always_track:
-            monitor(session, vehicle_id, bus_num, offline_after, notified_stale)
+            monitor(session, vehicle_id, bus_num, offline_after, poll_interval)
             time.sleep(poll_interval)
             continue
 
         now = datetime.now()
-        in_window = any(is_in_window(now, entry) for entry in schedule)
+        active = get_active_window_name(now, schedule)
 
-        if in_window:
-            monitor(session, vehicle_id, bus_num, offline_after, notified_stale)
+        if active:
+            if active != _active_schedule:
+                if _active_schedule is not None:
+                    log(f"{_active_schedule} Schedule Ended")
+                    log()
+                log(f"{active} Schedule Started")
+                log()
+                _active_schedule = active
+            monitor(session, vehicle_id, bus_num, offline_after, poll_interval)
             time.sleep(poll_interval)
         else:
+            if _active_schedule is not None:
+                log(f"{_active_schedule} Schedule Ended")
+                log()
+                _active_schedule = None
+
             next_window = find_next_window(now, schedule)
             if next_window is None:
-                print(
-                    "No upcoming monitoring windows found "
-                    "in the next 14 days. Sleeping 1 hour."
-                )
-                print()
+                log("No upcoming monitoring windows found in the next 14 days.")
+                log("Sleeping 1 hour.")
+                log()
                 time.sleep(3600)
                 continue
 
@@ -530,13 +661,21 @@ def main() -> None:
                 continue
 
             wait_str = format_wait_duration(sleep_secs)
-            print(
-                f"Outside monitoring window. "
-                f"Next window at "
-                f"{next_window.strftime('%a %b %d %H:%M:%S')} "
-                f"(in {wait_str}). Sleeping."
-            )
-            print()
+            log_separator()
+            log()
+            log("Outside Monitoring Window")
+            log()
+            log(f"Current Time")
+            log(f"{now.strftime('%a %b %d %H:%M:%S')}")
+            log()
+            log("Next Monitoring Window")
+            log(f"{next_window.strftime('%a %b %d %H:%M:%S')}")
+            log()
+            log("Sleeping For")
+            log(wait_str)
+            log()
+            log_separator()
+            log()
             time.sleep(sleep_secs)
 
 
