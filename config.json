@@ -2,6 +2,12 @@
     "bus_number": "KA57F4864",
     "poll_interval_secs": 10,
     "offline_after_mins": 5,
+    "log": {
+        "enabled": true,
+        "file": "bmtc_tracker.log",
+        "max_lines": 2000,
+        "trim_to_lines": 1000
+    },
     "schedule": [
         {
             "name": "Morning",

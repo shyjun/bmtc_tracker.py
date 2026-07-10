@@ -48,8 +48,6 @@ HEADERS = {
 DAY_NAMES = {"Mon": 0, "Tue": 1, "Wed": 2, "Thu": 3, "Fri": 4, "Sat": 5, "Sun": 6}
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 BASH_CMDS_DIR = "/home/snarangaprath/WORK/BASH_CMDS"
-MAX_LOG_LINES = 2000
-TRIM_TO_LINES = 1000
 
 
 ################################################################################
@@ -127,19 +125,19 @@ def _close_log() -> None:
 
 
 def _rotate_log() -> None:
-    """Trim the log file to TRIM_TO_LINES lines when it exceeds MAX_LOG_LINES."""
+    """Trim the log file to _log_trim_to_lines lines when it exceeds _log_max_lines."""
     global _log_fp, _log_line_count
     _close_log()
     try:
         with open(_log_file_path, "r") as f:
             lines = f.readlines()
-        keep = lines[-TRIM_TO_LINES:]
+        keep = lines[-_log_trim_to_lines:]
         with open(_log_file_path, "w") as f:
             f.writelines(keep)
     except (OSError, IOError):
         pass
     _log_fp = open(_log_file_path, "a")
-    _log_line_count = TRIM_TO_LINES
+    _log_line_count = _log_trim_to_lines
 
 
 def file_log(message: str) -> None:
@@ -151,14 +149,25 @@ def file_log(message: str) -> None:
     _log_fp.write(line)
     _log_fp.flush()
     _log_line_count += 1
-    if _log_line_count > MAX_LOG_LINES:
+    if _log_line_count > _log_max_lines:
         _rotate_log()
 
 
-def init_logging() -> None:
-    """Initialize the log file: count existing lines and open for appending."""
-    global _log_fp, _log_line_count, _log_file_path
-    _log_file_path = os.path.join(SCRIPT_DIR, "bmtc_tracker.log")
+def init_logging(config: dict[str, Any]) -> None:
+    """Initialize the log file from config: count existing lines and open for appending."""
+    global _log_fp, _log_line_count, _log_file_path, _log_enabled, _log_max_lines, _log_trim_to_lines
+
+    log_cfg = config.get("log", {})
+    _log_enabled = log_cfg.get("enabled", True)
+    _log_max_lines = log_cfg.get("max_lines", 2000)
+    _log_trim_to_lines = log_cfg.get("trim_to_lines", 1000)
+
+    if not _log_enabled:
+        _log_fp = None
+        return
+
+    filename = log_cfg.get("file", "bmtc_tracker.log")
+    _log_file_path = os.path.join(SCRIPT_DIR, filename)
     if os.path.isfile(_log_file_path):
         try:
             with open(_log_file_path, "r") as f:
@@ -647,6 +656,9 @@ _last_good_refresh: Optional[datetime] = None
 _log_fp: Optional[io.TextIOWrapper] = None
 _log_line_count: int = 0
 _log_file_path: str = ""
+_log_enabled: bool = True
+_log_max_lines: int = 2000
+_log_trim_to_lines: int = 1000
 
 
 ################################################################################
@@ -1075,10 +1087,9 @@ def main() -> None:
     _verbose = args.verbose
     _show_http_msgs = args.show_http_msgs
 
-    init_logging()
-
     config_path = find_config()
     config = load_config(config_path)
+    init_logging(config)
     validate_config(config)
 
     bus_num = args.bus_num or config["bus_number"]
