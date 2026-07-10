@@ -27,12 +27,12 @@
             "name": "Afternoon",
             "enabled": true,
             "days": ["Mon","Tue","Wed","Thu","Fri"],
-            "start": "14:00",
+            "start": "12:00",
             "end": "17:00",
             "source": "KR Market (Kalasipalya)",
             "destination": "Muttanalluru",
             "alert": {
-                "alert_start_location": "St. John's Hospital",
+                "alert_start_location": "Hosur Road Junction",
                 "alert_end_location": "Koramangala Water Tank",
                 "notification": "Time to leave office! Your bus is approaching."
             }

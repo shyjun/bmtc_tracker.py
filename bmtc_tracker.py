@@ -824,7 +824,9 @@ def _normalize(name: Optional[str]) -> str:
     if not name:
         return ""
     import re as _re
-    return _re.sub(r"\s+", " ", name.strip().lower())
+    name = _re.sub(r"\s+", " ", name.strip().lower())
+    name = _re.sub(r"\s*\(.*?\)\s*", " ", name).strip()
+    return _re.sub(r"\s+", " ", name)
 
 
 def matches_route(trip_info: dict[str, Any], entry: dict[str, Any]) -> bool:
@@ -1047,6 +1049,8 @@ def check_travel_alerts(
             elif not approaching and not at_end and was_fired:
                 notify_resumed()
                 _travel_alert_fired.pop(entry["name"], None)
+            elif not approaching and not at_end and not was_fired:
+                _check_alert_positional(trip_info, trip_data, entry)
         else:
             _check_alert_positional(trip_info, trip_data, entry)
 
@@ -1093,13 +1097,17 @@ def monitor(
     offline_after: timedelta,
     poll_interval: int,
     schedule: Optional[list[dict[str, Any]]] = None,
+    schedule_name: Optional[str] = None,
 ) -> None:
     """Perform a single poll of vehicle tracking data."""
     global _was_idle, _last_good_refresh, _stale_notified
 
     log_separator()
     log(datetime.now().strftime("%a %b %d %H:%M:%S"))
-    log(f"Checking {bus_num}")
+    if schedule_name:
+        log(f"[{schedule_name}] Checking {bus_num}")
+    else:
+        log(f"Checking {bus_num}")
     log_separator()
     print_blank()
 
@@ -1237,7 +1245,7 @@ def main() -> None:
 
     while True:
         if always_track:
-            monitor(session, vehicle_id, bus_num, offline_after, poll_interval, schedule)
+            monitor(session, vehicle_id, bus_num, offline_after, poll_interval, schedule, "Always")
             time.sleep(poll_interval)
             continue
 
@@ -1263,7 +1271,7 @@ def main() -> None:
                 log(f"{active} Schedule Started")
                 print_blank()
                 _active_schedule = active
-            monitor(session, vehicle_id, bus_num, offline_after, poll_interval, schedule)
+            monitor(session, vehicle_id, bus_num, offline_after, poll_interval, schedule, active)
 
             active_entry = next((e for e in schedule if e["name"] == active), None)
             if active_entry and active_entry.get("_state") == "COMPLETED":
