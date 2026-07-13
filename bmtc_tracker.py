@@ -1136,9 +1136,7 @@ def monitor(
 
     if state == TRACKER_IDLE:
         check_tracking(trip_info, bus_num, offline_after)
-        if not _was_idle:
-            _travel_alert_fired.clear()
-            _was_idle = True
+        _was_idle = True
         print_idle_status(trip_info)
         return
 
@@ -1238,6 +1236,7 @@ def main() -> None:
     print_startup_banner(config, bus_num, vehicle_id, always_track)
 
     _active_schedule: Optional[str] = None
+    _completed_notified: set[str] = set()
     _current_date = datetime.now().date()
 
     while True:
@@ -1254,10 +1253,11 @@ def main() -> None:
             for entry in schedule:
                 entry["_state"] = "ACTIVE"
             _travel_alert_fired.clear()
+            _completed_notified.clear()
             log("New day. All schedules reset.")
             print_blank()
 
-        active_schedule_list = [e for e in schedule if e.get("_state") != "COMPLETED"]
+        active_schedule_list = schedule
         active = get_active_window_name(now, active_schedule_list)
 
         if active:
@@ -1271,32 +1271,12 @@ def main() -> None:
             monitor(session, vehicle_id, bus_num, offline_after, poll_interval, schedule, active)
 
             active_entry = next((e for e in schedule if e["name"] == active), None)
-            if active_entry and active_entry.get("_state") == "COMPLETED":
+            if active_entry and active_entry.get("_state") == "COMPLETED" and active not in _completed_notified:
                 log_separator()
-                log(f"{active} schedule completed.")
-                alert = active_entry["alert"]
-                log("Bus has crossed")
-                log(alert["alert_end_location"])
-                log("Monitoring stopped for this schedule.")
+                log(f"{active} alert completed — bus crossed {active_entry['alert']['alert_end_location']}.")
                 log_separator()
                 print_blank()
-                _active_schedule = None
-                remaining = [e for e in schedule if e.get("_state") != "COMPLETED"]
-                next_window = find_next_window(now, remaining)
-                if next_window is None:
-                    log("No upcoming monitoring windows found in the next 14 days.")
-                    log("Sleeping 1 hour.")
-                    print_blank()
-                    time.sleep(3600)
-                    continue
-                sleep_secs = (next_window - datetime.now()).total_seconds()
-                if sleep_secs > 0:
-                    wait_str = format_wait_duration(sleep_secs)
-                    log("Waiting for next schedule...")
-                    log(wait_str)
-                    print_blank()
-                    time.sleep(sleep_secs)
-                continue
+                _completed_notified.add(active)
             time.sleep(poll_interval)
         else:
             if _active_schedule is not None:
@@ -1306,9 +1286,7 @@ def main() -> None:
 
             next_window = find_next_window(now, active_schedule_list)
             if next_window is None:
-                log("No upcoming monitoring windows found in the next 14 days.")
-                log("Sleeping 1 hour.")
-                print_blank()
+                log(f"{datetime.now():%a %b %d %H:%M:%S} No upcoming windows found in the next 14 days. Sleeping 1 hour.")
                 time.sleep(3600)
                 continue
 
