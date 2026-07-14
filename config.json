@@ -5,8 +5,8 @@
     "log": {
         "enabled": true,
         "file": "bmtc_tracker.log",
-        "max_lines": 8000,
-        "trim_to_lines": 1000
+        "max_lines": 16000,
+        "trim_to_lines": 4000
     },
     "schedule": [
         {
@@ -14,7 +14,7 @@
             "enabled": true,
             "days": ["Mon","Tue","Wed","Thu","Fri"],
             "start": "07:00",
-            "end": "08:30",
+            "end": "09:30",
             "source": "Muttanalluru",
             "destination": "KR Market (Kalasipalya)",
             "alert": {
@@ -27,8 +27,8 @@
             "name": "Afternoon",
             "enabled": true,
             "days": ["Mon","Tue","Wed","Thu","Fri"],
-            "start": "12:00",
-            "end": "17:00",
+            "start": "14:00",
+            "end": "19:30",
             "source": "KR Market (Kalasipalya)",
             "destination": "Muttanalluru",
             "alert": {
