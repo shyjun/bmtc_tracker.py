@@ -307,6 +307,19 @@ def _api_post(
             log(f"  {line}")
 
     resp = session.post(url, headers=HEADERS, json=payload, timeout=HTTP_TIMEOUT)
+    log(f"HTTP {resp.status_code}")
+
+    resp.raise_for_status()
+    data = resp.json()
+
+    if url == TRIP_DETAILS_URL:
+        ll = data.get("LiveLocation")
+        if isinstance(ll, list) and len(ll) > 0:
+            rc = ll[0].get("responsecode")
+        else:
+            rc = data.get("responsecode")
+        if rc is not None:
+            log(f"RespCode {rc}")
 
     if _show_http_msgs:
         print_blank()
@@ -317,15 +330,14 @@ def _api_post(
             log(f"  {k}: {v}")
         log("Body:")
         try:
-            pretty = json.dumps(resp.json(), indent=2)
+            pretty = json.dumps(data, indent=2)
             for line in pretty.splitlines():
                 log(f"  {line}")
         except Exception:
             for line in resp.text.splitlines():
                 log(f"  {line}")
 
-    resp.raise_for_status()
-    return resp.json()
+    return data
 
 
 def fetch_trip_details(
