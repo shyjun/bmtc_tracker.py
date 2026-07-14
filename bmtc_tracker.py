@@ -1020,6 +1020,8 @@ def check_travel_alerts(
     for entry in schedule:
         if not entry.get("enabled", False):
             continue
+        if not is_in_window(datetime.now(), entry):
+            continue
         if entry.get("_state") == "COMPLETED":
             continue
         alert = entry.get("alert")
