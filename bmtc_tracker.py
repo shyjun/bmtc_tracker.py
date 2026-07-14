@@ -678,13 +678,13 @@ def _find_script(name: str) -> Optional[str]:
     return None
 
 
-def notify_stale(message: str) -> None:
+def notify_status_message(message: str) -> None:
     """Send stale notification via pushover and show it on screen."""
     build_script = _find_script("buildresultshow.sh")
     if build_script:
         try:
             subprocess.run(
-                [build_script, "60", message],
+                [build_script, "3", message],
                 timeout=10,
                 capture_output=True,
             )
@@ -706,6 +706,18 @@ def notify_stale(message: str) -> None:
     else:
         log_error("Warning: pushover_msg_send.sh not found; skipping push notification.")
 
+    ntfy_script = _find_script("ntfy_send.sh")
+    if ntfy_script:
+        try:
+            subprocess.run(
+                [ntfy_script, message],
+                timeout=10,
+                capture_output=True,
+            )
+        except (FileNotFoundError, subprocess.TimeoutExpired) as e:
+            log_error(f"Warning: ntfy_send.sh failed: {e}")
+    else:
+        log_error("Warning: ntfy_send.sh not found; skipping ntfy notification.")
 
 def notify_resumed() -> None:
     """Clear the stale notification display."""
@@ -802,7 +814,7 @@ def check_tracking(
                 f"Last refresh: {trip_info['last_refresh_str']}. "
                 f"Location: {loc_name}"
             )
-            notify_stale(msg)
+            notify_status_message(msg)
             _stale_notified = True
     else:
         log("Tracking OK")
@@ -982,7 +994,7 @@ def _fire_travel_alert(entry: dict[str, Any]) -> None:
     log_separator()
     print_blank()
 
-    notify_stale(alert["notification"])
+    notify_status_message(alert["notification"])
 
 
 def check_travel_alerts(
@@ -1118,7 +1130,7 @@ def monitor(
                     f"Bus {bus_num} tracking is stale. "
                     f"No API response received since {_last_good_refresh}."
                 )
-                notify_stale(msg)
+                notify_status_message(msg)
                 _stale_notified = True
         log(f"Network/API error. Retrying in {poll_interval} seconds...")
         print_blank()
