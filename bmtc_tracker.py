@@ -1472,6 +1472,17 @@ def main() -> None:
                     log_separator()
                     print_blank()
                     _completed_notified.add(active)
+                    next_dt = find_next_window(datetime.now(), schedule)
+                    if next_dt:
+                        for e in schedule:
+                            if not e.get("enabled", False):
+                                continue
+                            t = time_str_to_time(e["start"])
+                            if next_dt.strftime("%a") in e["days"] and t == next_dt.time():
+                                log(f"Next schedule: {e['name']} at {e['start']}")
+                                break
+                    else:
+                        log("No upcoming schedules.")
             else:
                 monitor(session, vehicle_id, bus_num, offline_after, poll_interval, schedule, active)
 
