@@ -5,8 +5,8 @@
     "log": {
         "enabled": true,
         "file": "bmtc_tracker.log",
-        "max_lines": 40000,
-        "trim_to_lines": 30000
+        "max_lines": 80000,
+        "trim_to_lines": 70000
     },
     "schedule": [
         {
