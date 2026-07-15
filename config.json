@@ -2,6 +2,7 @@
     "bus_number": "KA57F4864",
     "poll_interval_secs": 10,
     "offline_after_mins": 3,
+    "http_timeout_secs": 30,
     "log": {
         "enabled": true,
         "file": "bmtc_tracker.log",

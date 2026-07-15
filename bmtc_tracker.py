@@ -33,7 +33,7 @@ from shapely.geometry import Point, LineString
 ################################################################################
 
 VERSION = "0.9.0"
-HTTP_TIMEOUT = 10
+_http_timeout = 10
 LIST_VEHICLES_URL = "https://bmtcmobileapi.karnataka.gov.in/WebAPI/ListVehicles"
 TRIP_DETAILS_URL = "https://bmtcmobileapi.karnataka.gov.in/WebAPI/VehicleTripDetails_v2"
 
@@ -251,6 +251,12 @@ def parse_cli_args() -> Any:
         default=False,
         help="Print HTTP request and response messages",
     )
+    parser.add_argument(
+        "--timeout",
+        type=int,
+        default=None,
+        help="HTTP request timeout in seconds (overrides config.json)",
+    )
     return parser.parse_args()
 
 
@@ -329,7 +335,7 @@ def _api_post(
         for line in json.dumps(payload, indent=2).splitlines():
             log(f"  {line}")
 
-    resp = session.post(url, headers=HEADERS, json=payload, timeout=HTTP_TIMEOUT)
+    resp = session.post(url, headers=HEADERS, json=payload, timeout=_http_timeout)
     log(f"HTTP {resp.status_code}")
 
     try:
@@ -1353,6 +1359,7 @@ def print_startup_banner(
     print_blank()
     print_key_value("Poll Interval", f"{config['poll_interval_secs']} sec")
     print_key_value("Offline Alert", f"{config['offline_after_mins']} min")
+    print_key_value("HTTP Timeout", f"{_http_timeout} sec")
     print_blank()
 
     if always_track:
@@ -1391,7 +1398,7 @@ def print_startup_banner(
 
 def main() -> None:
     """Entry point."""
-    global _verbose, _show_http_msgs
+    global _verbose, _show_http_msgs, _http_timeout
 
     args = parse_cli_args()
 
@@ -1410,12 +1417,14 @@ def main() -> None:
     bus_num = args.bus_num or config["bus_number"]
     poll_interval = config["poll_interval_secs"]
     offline_after = timedelta(minutes=config["offline_after_mins"])
+    _http_timeout = args.timeout or config.get("http_timeout_secs", 10)
     always_track = args.always_track
     schedule = config["schedule"]
     for entry in schedule:
         entry["_state"] = "ACTIVE"
 
     session = requests.Session()
+    log(f"Resolving vehicle ID for {bus_num}...")
     vehicle_id = resolve_vehicle_id(session, bus_num)
 
     print_startup_banner(config, bus_num, vehicle_id, always_track)
