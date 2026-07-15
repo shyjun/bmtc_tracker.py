@@ -283,6 +283,16 @@ def validate_config(config: dict[str, Any]) -> None:
                 )
                 sys.exit(1)
 
+    log_cfg = config.get("log", {})
+    l_max = log_cfg.get("max_lines", 2000)
+    l_trim = log_cfg.get("trim_to_lines", 1000)
+    if l_trim >= l_max:
+        log_error(
+            "Error: 'log.trim_to_lines' must be less than 'log.max_lines' "
+            f"({l_trim} >= {l_max})."
+        )
+        sys.exit(1)
+
 
 ################################################################################
 # BMTC API Helpers
