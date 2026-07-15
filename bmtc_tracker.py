@@ -1461,15 +1461,20 @@ def main() -> None:
                 log(f"{active} Schedule Started")
                 print_blank()
                 _active_schedule = active
-            monitor(session, vehicle_id, bus_num, offline_after, poll_interval, schedule, active)
 
             active_entry = next((e for e in schedule if e["name"] == active), None)
-            if active_entry and active_entry.get("_state") == "COMPLETED" and active not in _completed_notified:
-                log_separator()
-                log(f"{active} alert completed — bus crossed {active_entry['alert']['alert_end_location']}.")
-                log_separator()
-                print_blank()
-                _completed_notified.add(active)
+            is_completed = active_entry and active_entry.get("_state") == "COMPLETED"
+
+            if is_completed:
+                if active not in _completed_notified:
+                    log_separator()
+                    log(f"{active} alert completed — bus crossed {active_entry['alert']['alert_end_location']}.")
+                    log_separator()
+                    print_blank()
+                    _completed_notified.add(active)
+            else:
+                monitor(session, vehicle_id, bus_num, offline_after, poll_interval, schedule, active)
+
             time.sleep(poll_interval)
         else:
             if _active_schedule is not None:
