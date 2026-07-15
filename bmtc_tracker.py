@@ -831,8 +831,12 @@ def check_tracking(
         lon = trip_info["longitude"] or "N/A"
         print_key_value("Coordinates", f"{lat}, {lon}")
         seg_src = trip_info.get("_segment_source")
-        if seg_src:
-            print_key_value("Segment Source", seg_src)
+        if seg_src == "BMTC_VERIFIED":
+            print_key_value("Source", "BMTC (Verified)")
+        elif seg_src == "SHAPELY_CORRECTED":
+            print_key_value("Source", "Shapely (Corrected)")
+        elif seg_src == "SHAPELY_FALLBACK":
+            print_key_value("Source", "Shapely (Fallback)")
         print_blank()
 
     is_stale = diff > offline_after
@@ -879,16 +883,6 @@ def matches_route(trip_info: dict[str, Any], entry: dict[str, Any]) -> bool:
         _normalize(trip_info["source"]) == _normalize(entry["source"])
         and _normalize(trip_info["destination"]) == _normalize(entry["destination"])
     )
-
-
-def is_approaching_start(trip_info: dict[str, Any], alert: dict[str, Any]) -> bool:
-    """Check if the bus's next stop is the alert start location (approaching)."""
-    return _normalize(trip_info["next_stop"]) == _normalize(alert["alert_start_location"])
-
-
-def is_at_end(trip_info: dict[str, Any], alert: dict[str, Any]) -> bool:
-    """Check if the bus's next stop is the alert end location (segment passed)."""
-    return _normalize(trip_info["next_stop"]) == _normalize(alert["alert_end_location"])
 
 
 def matches_day(trip_info: dict[str, Any], entry: dict[str, Any]) -> bool:
@@ -963,9 +957,14 @@ def _find_nearest_segment(
 def resolve_segment(trip_info: dict[str, Any], trip_data: dict[str, Any]) -> None:
     """Verify BMTC segment data against GPS position using Shapely.
 
-    Sets trip_info["_segment_source"] to "bmtc", "shapely", or None.
-    If Shapely finds a different segment than BMTC reports (or BMTC is
-    missing), overwrites previous_stop / next_stop with Shapely's result.
+    Sets trip_info["_segment_source"] to one of:
+      "BMTC_VERIFIED"     — BMTC provided values, Shapely matched
+      "SHAPELY_CORRECTED"  — BMTC provided values, Shapely disagreed
+      "SHAPELY_FALLBACK"   — BMTC did not provide values, Shapely filled in
+      None                — Shapely could not resolve
+
+    The resolved segment overwrites previous_stop / next_stop unless
+    BMTC_VERIFIED (in which case BMTC values are kept as-is).
     """
     lat = trip_info.get("latitude")
     lon = trip_info.get("longitude")
@@ -987,20 +986,58 @@ def resolve_segment(trip_info: dict[str, Any], trip_data: dict[str, Any]) -> Non
     bmtc_prev = trip_info.get("bm_previous_stop")
     bmtc_next = trip_info.get("bm_next_stop")
 
-    prev_match = bmtc_prev and _normalize(bmtc_prev) == _normalize(shapely_prev)
-    next_match = bmtc_next and _normalize(bmtc_next) == _normalize(shapely_next)
+    bmtc_available = bool(bmtc_prev and bmtc_next)
+
+    if bmtc_available:
+        prev_match = _normalize(bmtc_prev) == _normalize(shapely_prev)
+        next_match = _normalize(bmtc_next) == _normalize(shapely_next)
+    else:
+        prev_match = next_match = False
 
     if prev_match and next_match:
-        trip_info["_segment_source"] = "bmtc"
+        trip_info["_segment_source"] = "BMTC_VERIFIED"
+    elif bmtc_available:
+        trip_info["previous_stop"] = shapely_prev
+        trip_info["next_stop"] = shapely_next
+        trip_info["_segment_source"] = "SHAPELY_CORRECTED"
     else:
         trip_info["previous_stop"] = shapely_prev
         trip_info["next_stop"] = shapely_next
-        trip_info["_segment_source"] = "shapely"
-        if _verbose:
-            log(
-                f"Shapely corrected segment: {shapely_prev} -> {shapely_next}"
-                f" ({dist_m:.0f}m from route)"
-            )
+        trip_info["_segment_source"] = "SHAPELY_FALLBACK"
+
+    if _verbose:
+        log_separator()
+        log("Segment Verification")
+        log_separator()
+        log("BMTC Segment")
+        if bmtc_available:
+            log(f"  {bmtc_prev}")
+            print_arrow()
+            log(f"  {bmtc_next}")
+        else:
+            log("  Unavailable")
+        log()
+        log("Shapely Segment")
+        log(f"  {shapely_prev}")
+        print_arrow()
+        log(f"  {shapely_next}")
+        log()
+        if bmtc_available:
+            if prev_match and next_match:
+                log("Result: MATCH")
+            else:
+                log("Result: MISMATCH")
+        else:
+            log("Result: BMTC did not provide previous/next.")
+        log()
+        src = trip_info["_segment_source"]
+        if src == "BMTC_VERIFIED":
+            log("Using: BMTC (Verified)")
+        elif src == "SHAPELY_CORRECTED":
+            log("Using: Shapely (Corrected)")
+        elif src == "SHAPELY_FALLBACK":
+            log("Using: Shapely (Fallback)")
+        log_separator()
 
 
 def _check_alert_positional(
@@ -1009,11 +1046,13 @@ def _check_alert_positional(
     entry: dict[str, Any],
 ) -> None:
     """
-    Position-based travel alert fallback when nextstop/previousstop are null.
+    Evaluate a travel alert using the verified segment.
 
     Builds an ordered stop list from RouteDetails, locates the bus
-    within it, and compares against alert_start_location / alert_end_location
-    indices to fire/dismiss notifications.
+    within it using the verified previous_stop / next_stop (which may
+    have been resolved by Shapely), and compares against
+    alert_start_location / alert_end_location indices to fire/dismiss
+    notifications and mark completion.
     """
     global _travel_alert_fired
 
@@ -1176,20 +1215,7 @@ def check_travel_alerts(
             _travel_alert_fired.pop(entry["name"], None)
             continue
 
-        if trip_info.get("bm_previous_stop") and trip_info.get("bm_next_stop"):
-            approaching = is_approaching_start(trip_info, alert)
-            at_end = is_at_end(trip_info, alert)
-            was_fired = _travel_alert_fired.get(entry["name"], False)
-
-            if approaching and not was_fired:
-                _fire_travel_alert(entry)
-                _travel_alert_fired[entry["name"]] = True
-            elif at_end and was_fired:
-                notify_resumed()
-                _travel_alert_fired.pop(entry["name"], None)
-                entry["_state"] = "COMPLETED"
-            else:
-                _check_alert_positional(trip_info, trip_data, entry)
+        _check_alert_positional(trip_info, trip_data, entry)
 
 
 ################################################################################
