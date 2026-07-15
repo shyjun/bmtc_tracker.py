@@ -12,6 +12,7 @@ import atexit
 import io
 import json
 import os
+import signal
 import subprocess
 import sys
 import time
@@ -67,6 +68,16 @@ TRACKER_OFFLINE = "offline"
 
 _verbose = False
 _show_http_msgs = False
+
+
+def _toggle_http_msgs(signum, frame):
+    """Toggle HTTP message display on SIGUSR1."""
+    global _show_http_msgs
+    _show_http_msgs = not _show_http_msgs
+    log(f"HTTP message display {'enabled' if _show_http_msgs else 'disabled'}")
+
+
+signal.signal(signal.SIGUSR1, _toggle_http_msgs)
 
 
 def log(message: str = "") -> None:
@@ -1368,6 +1379,8 @@ def print_startup_banner(
             if i < len(enabled_entries) - 1:
                 log("-" * 56)
     print_blank()
+    log("Send SIGUSR1 to toggle HTTP message display")
+    print_blank()
 
     log_separator()
     print_blank()
@@ -1438,7 +1451,6 @@ def main() -> None:
             if active != _active_schedule:
                 if _active_schedule is not None:
                     log(f"{_active_schedule} Schedule Ended")
-                    print_blank()
                 log(f"{active} Schedule Started")
                 print_blank()
                 _active_schedule = active
