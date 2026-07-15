@@ -14,7 +14,7 @@
             "enabled": true,
             "days": ["Mon","Tue","Wed","Thu","Fri"],
             "start": "07:00",
-            "end": "09:30",
+            "end": "13:30",
             "source": "Muttanalluru",
             "destination": "KR Market (Kalasipalya)",
             "alert": {

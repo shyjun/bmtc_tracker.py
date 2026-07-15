@@ -24,6 +24,8 @@ warnings.filterwarnings("ignore", message=".*urllib3.*doesn't match a supported 
 
 import requests
 
+from shapely.geometry import Point, LineString
+
 
 ################################################################################
 # Constants
@@ -501,17 +503,22 @@ def extract_trip_info(trip_data: dict[str, Any]) -> dict[str, Any]:
     info: dict[str, Any] = {
         "source": route.get("sourcestation") if route else None,
         "destination": route.get("destinationstation") if route else None,
+        "bm_previous_stop": loc.get("previousstop") if loc else None,
+        "bm_next_stop": loc.get("nextstop") if loc else None,
         "previous_stop": loc.get("previousstop") if loc else None,
         "next_stop": loc.get("nextstop") if loc else None,
         "location": loc.get("location") if loc else None,
         "latitude": loc.get("latitude") if loc else None,
         "longitude": loc.get("longitude") if loc else None,
+        "curr_latitude": loc.get("latitude") if loc else None,
+        "curr_longitude": loc.get("longitude") if loc else None,
         "heading": loc.get("heading") if loc else None,
         "trip_status": loc.get("trip_status") if loc else None,
         "last_refresh_str": last_refresh_str,
         "last_refresh": last_refresh,
         "is_idle": len(get_route_details(trip_data)) == 0,
         "_raw_location_valid": loc is not None,
+        "_segment_source": None,
     }
     return info
 
@@ -823,6 +830,9 @@ def check_tracking(
         lat = trip_info["latitude"] or "N/A"
         lon = trip_info["longitude"] or "N/A"
         print_key_value("Coordinates", f"{lat}, {lon}")
+        seg_src = trip_info.get("_segment_source")
+        if seg_src:
+            print_key_value("Segment Source", seg_src)
         print_blank()
 
     is_stale = diff > offline_after
@@ -895,6 +905,102 @@ def _build_stop_list(trip_data: dict[str, Any]) -> list[str]:
         if name:
             stops.append(name)
     return stops
+
+
+def _build_route_segments(
+    trip_data: dict[str, Any],
+) -> list[tuple[int, int, Any]]:
+    """Build LineString segments from consecutive RouteDetails stops with valid coords.
+
+    Returns list of (from_idx, to_idx, LineString) tuples.
+    """
+    routes = get_route_details(trip_data)
+    segments = []
+    prev_idx = None
+    prev_lat = None
+    prev_lon = None
+    for i, r in enumerate(routes):
+        try:
+            lat = float(r.get("latitude", 0))
+            lon = float(r.get("longitude", 0))
+        except (TypeError, ValueError):
+            lat = lon = None
+        if lat is not None and lon is not None and lat != 0 and lon != 0:
+            if prev_idx is not None and prev_lat is not None and prev_lon is not None:
+                seg = LineString([(prev_lon, prev_lat), (lon, lat)])
+                segments.append((prev_idx, i, seg))
+            prev_idx = i
+            prev_lat = lat
+            prev_lon = lon
+    return segments
+
+
+def _find_nearest_segment(
+    lat: float, lon: float, segments: list[tuple[int, int, Any]]
+) -> tuple[Optional[int], Optional[int], float]:
+    """Find the route segment closest to the given GPS coordinate.
+
+    Returns (from_idx, to_idx, distance_m) of the nearest segment.
+    Returns (None, None, inf) if no segments.
+    """
+    if not segments:
+        return None, None, float("inf")
+    pt = Point(lon, lat)
+    best = None
+    best_dist = float("inf")
+    for from_idx, to_idx, seg in segments:
+        d = seg.distance(pt)
+        if d < best_dist:
+            best_dist = d
+            best = (from_idx, to_idx)
+    if best is None:
+        return None, None, float("inf")
+    # Convert degrees to approximate metres
+    dist_m = best_dist * 111320
+    return best[0], best[1], dist_m
+
+
+def resolve_segment(trip_info: dict[str, Any], trip_data: dict[str, Any]) -> None:
+    """Verify BMTC segment data against GPS position using Shapely.
+
+    Sets trip_info["_segment_source"] to "bmtc", "shapely", or None.
+    If Shapely finds a different segment than BMTC reports (or BMTC is
+    missing), overwrites previous_stop / next_stop with Shapely's result.
+    """
+    lat = trip_info.get("latitude")
+    lon = trip_info.get("longitude")
+    if lat is None or lon is None:
+        return
+
+    segments = _build_route_segments(trip_data)
+    if not segments:
+        return
+
+    routes = get_route_details(trip_data)
+    from_idx, to_idx, dist_m = _find_nearest_segment(lat, lon, segments)
+    if from_idx is None or to_idx is None:
+        return
+
+    shapely_prev = routes[from_idx].get("stationname", "")
+    shapely_next = routes[to_idx].get("stationname", "")
+
+    bmtc_prev = trip_info.get("bm_previous_stop")
+    bmtc_next = trip_info.get("bm_next_stop")
+
+    prev_match = bmtc_prev and _normalize(bmtc_prev) == _normalize(shapely_prev)
+    next_match = bmtc_next and _normalize(bmtc_next) == _normalize(shapely_next)
+
+    if prev_match and next_match:
+        trip_info["_segment_source"] = "bmtc"
+    else:
+        trip_info["previous_stop"] = shapely_prev
+        trip_info["next_stop"] = shapely_next
+        trip_info["_segment_source"] = "shapely"
+        if _verbose:
+            log(
+                f"Shapely corrected segment: {shapely_prev} -> {shapely_next}"
+                f" ({dist_m:.0f}m from route)"
+            )
 
 
 def _check_alert_positional(
@@ -1070,7 +1176,7 @@ def check_travel_alerts(
             _travel_alert_fired.pop(entry["name"], None)
             continue
 
-        if trip_info.get("previous_stop") and trip_info.get("next_stop"):
+        if trip_info.get("bm_previous_stop") and trip_info.get("bm_next_stop"):
             approaching = is_approaching_start(trip_info, alert)
             at_end = is_at_end(trip_info, alert)
             was_fired = _travel_alert_fired.get(entry["name"], False)
@@ -1157,6 +1263,7 @@ def monitor(
         return
 
     trip_info = extract_trip_info(trip_data)
+    resolve_segment(trip_info, trip_data)
 
     if trip_info["last_refresh"] is not None:
         if _last_good_refresh is None or trip_info["last_refresh"] > _last_good_refresh:
