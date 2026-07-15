@@ -332,7 +332,12 @@ def _api_post(
     resp = session.post(url, headers=HEADERS, json=payload, timeout=HTTP_TIMEOUT)
     log(f"HTTP {resp.status_code}")
 
-    resp.raise_for_status()
+    try:
+        resp.raise_for_status()
+    except requests.HTTPError:
+        log(f"Response body: {resp.text}")
+        raise
+
     data = resp.json()
 
     if url == TRIP_DETAILS_URL:
@@ -369,22 +374,15 @@ def fetch_trip_details(
     """
     Fetch live trip details for a given vehicle ID.
 
-    Retries exactly once on failure.
-    Returns the parsed JSON dict, or None if both attempts fail.
+    Returns the parsed JSON dict, or None on failure.
     """
     payload: dict[str, Any] = {"vehicleId": vehicle_id}
-    for attempt in range(2):
-        try:
-            return _api_post(session, TRIP_DETAILS_URL, payload)
-        except (requests.RequestException, json.JSONDecodeError) as e:
-            if attempt == 0:
-                if _verbose:
-                    log_error(f"Retrying after error: {e}")
-                continue
-            if _verbose:
-                log_error(f"Error: trip details fetch failed: {e}")
-            return None
-    return None
+    try:
+        return _api_post(session, TRIP_DETAILS_URL, payload)
+    except (requests.RequestException, json.JSONDecodeError) as e:
+        if _verbose:
+            log_error(f"Error: trip details fetch failed: {e}")
+        return None
 
 
 def resolve_vehicle_id(session: requests.Session, bus_num: str) -> int:
