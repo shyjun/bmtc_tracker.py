@@ -835,8 +835,12 @@ def check_tracking(
             print_key_value("Source", "BMTC (Verified)")
         elif seg_src == "SHAPELY_CORRECTED":
             print_key_value("Source", "Shapely (Corrected)")
+            bm_prev = trip_info.get("bm_previous_stop") or "N/A"
+            bm_next = trip_info.get("bm_next_stop") or "N/A"
+            print_key_value("BMTC reported", f"{bm_prev} \u2192 {bm_next}")
         elif seg_src == "SHAPELY_FALLBACK":
             print_key_value("Source", "Shapely (Fallback)")
+            print_key_value("BMTC reported", "Unavailable")
         print_blank()
 
     is_stale = diff > offline_after
@@ -1005,38 +1009,41 @@ def resolve_segment(trip_info: dict[str, Any], trip_data: dict[str, Any]) -> Non
         trip_info["next_stop"] = shapely_next
         trip_info["_segment_source"] = "SHAPELY_FALLBACK"
 
-    if _verbose:
+    # Find BMTC segment indices in the route list
+        bmtc_from_idx = bmtc_to_idx = None
+        if bmtc_available:
+            norm_routes = [_normalize(r.get("stationname", "")) for r in routes]
+            n_bmtc_prev = _normalize(bmtc_prev)
+            n_bmtc_next = _normalize(bmtc_next)
+            try:
+                bmtc_from_idx = norm_routes.index(n_bmtc_prev)
+                bmtc_to_idx = norm_routes.index(n_bmtc_next)
+            except ValueError:
+                pass
+
         log_separator()
         log("Segment Verification")
         log_separator()
-        log("BMTC Segment")
-        if bmtc_available:
-            log(f"  {bmtc_prev}")
-            print_arrow()
-            log(f"  {bmtc_next}")
+        if bmtc_available and bmtc_from_idx is not None:
+            log(f"BMTC Segment     : [{bmtc_from_idx} \u2192 {bmtc_to_idx}] {bmtc_prev} \u2192 {bmtc_next}")
         else:
-            log("  Unavailable")
-        log()
-        log("Shapely Segment")
-        log(f"  {shapely_prev}")
-        print_arrow()
-        log(f"  {shapely_next}")
+            log("BMTC Segment     : Unavailable")
+        log(f"Shapely Segment  : [{from_idx} \u2192 {to_idx}] {shapely_prev} \u2192 {shapely_next}")
         log()
         if bmtc_available:
             if prev_match and next_match:
-                log("Result: MATCH")
+                log("Result           : MATCH")
             else:
-                log("Result: MISMATCH")
+                log("Result           : MISMATCH")
         else:
-            log("Result: BMTC did not provide previous/next.")
-        log()
+            log("Result           : BMTC did not provide previous/next.")
         src = trip_info["_segment_source"]
         if src == "BMTC_VERIFIED":
-            log("Using: BMTC (Verified)")
+            log("Using            : BMTC (Verified)")
         elif src == "SHAPELY_CORRECTED":
-            log("Using: Shapely (Corrected)")
+            log("Using            : Shapely (Corrected)")
         elif src == "SHAPELY_FALLBACK":
-            log("Using: Shapely (Fallback)")
+            log("Using            : Shapely (Fallback)")
         log_separator()
 
 
