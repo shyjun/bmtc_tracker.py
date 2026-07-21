@@ -694,6 +694,7 @@ def format_wait_duration(seconds: float) -> str:
 
 _stale_notified = False
 _travel_alert_fired: dict[str, bool] = {}
+_last_call_fired: dict[str, bool] = {}
 _was_idle = False
 _last_good_refresh: Optional[datetime] = None
 
@@ -1076,7 +1077,7 @@ def _check_alert_positional(
     alert_start_location / alert_end_location indices to fire/dismiss
     notifications and mark completion.
     """
-    global _travel_alert_fired
+    global _travel_alert_fired, _last_call_fired
 
     stops = _build_stop_list(trip_data)
     if not stops:
@@ -1142,6 +1143,7 @@ def _check_alert_positional(
         if was_fired:
             notify_resumed()
             _travel_alert_fired.pop(name, None)
+        _last_call_fired.pop(name, None)
         entry["_state"] = "COMPLETED"
         return
 
@@ -1149,11 +1151,16 @@ def _check_alert_positional(
         if not was_fired:
             _fire_travel_alert(entry)
             _travel_alert_fired[name] = True
+        if _travel_alert_fired.get(name) and current_idx >= start_idx + 1:
+            if not _last_call_fired.get(name):
+                notify_status_message("Last call to leave! " + alert["notification"])
+                _last_call_fired[name] = True
         return
 
     if was_fired:
         notify_resumed()
         _travel_alert_fired.pop(name, None)
+        _last_call_fired.pop(name, None)
 
 
 def _fire_travel_alert(entry: dict[str, Any]) -> None:
@@ -1192,7 +1199,7 @@ def check_travel_alerts(
     schedule: list[dict[str, Any]],
 ) -> None:
     """Evaluate alerts from enabled schedule entries against the current trip."""
-    global _travel_alert_fired
+    global _travel_alert_fired, _last_call_fired
 
     if not schedule:
         return
@@ -1231,10 +1238,12 @@ def check_travel_alerts(
 
         if not matches_day(trip_info, entry):
             _travel_alert_fired.pop(entry["name"], None)
+            _last_call_fired.pop(entry["name"], None)
             continue
 
         if not matches_route(trip_info, entry):
             _travel_alert_fired.pop(entry["name"], None)
+            _last_call_fired.pop(entry["name"], None)
             continue
 
         _check_alert_positional(trip_info, trip_data, entry)
@@ -1447,6 +1456,7 @@ def main() -> None:
             for entry in schedule:
                 entry["_state"] = "ACTIVE"
             _travel_alert_fired.clear()
+            _last_call_fired.clear()
             _completed_notified.clear()
             log("New day. All schedules reset.")
             print_blank()
