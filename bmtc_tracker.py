@@ -723,7 +723,7 @@ def _find_script(name: str) -> Optional[str]:
     return None
 
 
-def notify_status_message(message: str) -> None:
+def notify_alert_message(message: str) -> None:
     """Send stale notification via pushover and show it on screen."""
     build_script = _find_script("buildresultshow.sh")
     if build_script:
@@ -733,6 +733,7 @@ def notify_status_message(message: str) -> None:
                 timeout=10,
                 capture_output=True,
             )
+            log(f"buildresultshow.sh: {message}")
         except (FileNotFoundError, subprocess.TimeoutExpired) as e:
             log_error(f"Warning: buildresultshow.sh failed: {e}")
     else:
@@ -746,6 +747,7 @@ def notify_status_message(message: str) -> None:
                 timeout=10,
                 capture_output=True,
             )
+            log(f"pushover_msg_send.sh: {message}")
         except (FileNotFoundError, subprocess.TimeoutExpired) as e:
             log_error(f"Warning: pushover_msg_send.sh failed: {e}")
     else:
@@ -759,6 +761,7 @@ def notify_status_message(message: str) -> None:
                 timeout=10,
                 capture_output=True,
             )
+            log(f"ntfy_send.sh: {message}")
         except (FileNotFoundError, subprocess.TimeoutExpired) as e:
             log_error(f"Warning: ntfy_send.sh failed: {e}")
     else:
@@ -870,7 +873,7 @@ def check_tracking(
                 f"Last refresh: {trip_info['last_refresh_str']}. "
                 f"Location: {loc_name}"
             )
-            notify_status_message(msg)
+            notify_alert_message(msg)
             _stale_notified = True
     else:
         log("Tracking OK")
@@ -1153,7 +1156,7 @@ def _check_alert_positional(
             _travel_alert_fired[name] = True
         if _travel_alert_fired.get(name) and current_idx >= start_idx + 1:
             if not _last_call_fired.get(name):
-                notify_status_message("Last call to leave! " + alert["notification"])
+                notify_alert_message("Last call to leave! " + alert["notification"])
                 _last_call_fired[name] = True
         return
 
@@ -1190,7 +1193,7 @@ def _fire_travel_alert(entry: dict[str, Any]) -> None:
     log_separator()
     print_blank()
 
-    notify_status_message(alert["notification"])
+    notify_alert_message(alert["notification"])
 
 
 def check_travel_alerts(
@@ -1313,7 +1316,7 @@ def monitor(
                     f"Bus {bus_num} tracking is stale. "
                     f"No API response received since {_last_good_refresh}."
                 )
-                notify_status_message(msg)
+                notify_alert_message(msg)
                 _stale_notified = True
         log(f"Network/API error. Retrying in {poll_interval} seconds...")
         print_blank()
