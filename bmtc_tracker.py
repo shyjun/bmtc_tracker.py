@@ -1493,6 +1493,9 @@ def main() -> None:
                             t = time_str_to_time(e["start"])
                             if next_dt.strftime("%a") in e["days"] and t == next_dt.time():
                                 log(f"Next schedule: {e['name']} at {e['start']}")
+                                sleep_secs = (next_dt - datetime.now()).total_seconds()
+                                if sleep_secs > 0:
+                                    log(f"Sleeping for {format_wait_duration(sleep_secs)} till {e['name']} at {e['start']}")
                                 break
                     else:
                         log("No upcoming schedules.")
