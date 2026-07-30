@@ -695,6 +695,7 @@ def format_wait_duration(seconds: float) -> str:
 _stale_notified = False
 _travel_alert_fired: dict[str, bool] = {}
 _last_call_fired: dict[str, bool] = {}
+_boarding_notified: dict[str, bool] = {}
 _was_idle = False
 _last_good_refresh: Optional[datetime] = None
 
@@ -1080,7 +1081,7 @@ def _check_alert_positional(
     alert_start_location / alert_end_location indices to fire/dismiss
     notifications and mark completion.
     """
-    global _travel_alert_fired, _last_call_fired
+    global _travel_alert_fired, _last_call_fired, _boarding_notified
 
     stops = _build_stop_list(trip_data)
     if not stops:
@@ -1142,11 +1143,34 @@ def _check_alert_positional(
     name = entry["name"]
     was_fired = _travel_alert_fired.get(name, False)
 
+    boarding_location = alert.get("boarding_location")
+    if boarding_location and not _boarding_notified.get(name):
+        routes = get_route_details(trip_data)
+        for r in routes:
+            if _normalize(r.get("stationname")) == _normalize(boarding_location):
+                try:
+                    stop_lat = float(r.get("latitude", 0))
+                    stop_lon = float(r.get("longitude", 0))
+                except (TypeError, ValueError):
+                    break
+                if stop_lat and stop_lon:
+                    bus_lat = trip_info.get("latitude")
+                    bus_lon = trip_info.get("longitude")
+                    if bus_lat is not None and bus_lon is not None:
+                        bus_pt = Point(bus_lon, bus_lat)
+                        stop_pt = Point(stop_lon, stop_lat)
+                        dist_m = bus_pt.distance(stop_pt) * 111320
+                        if dist_m <= 200:
+                            notify_alert_message(f"Bus arrived at {boarding_location}")
+                            _boarding_notified[name] = True
+                break
+
     if current_idx >= end_idx:
         if was_fired:
             notify_resumed()
             _travel_alert_fired.pop(name, None)
         _last_call_fired.pop(name, None)
+        _boarding_notified.pop(name, None)
         entry["_state"] = "COMPLETED"
         return
 
@@ -1164,7 +1188,6 @@ def _check_alert_positional(
         notify_resumed()
         _travel_alert_fired.pop(name, None)
         _last_call_fired.pop(name, None)
-
 
 def _fire_travel_alert(entry: dict[str, Any]) -> None:
     """Send the travel alert notification and log the formatted block."""
@@ -1202,7 +1225,7 @@ def check_travel_alerts(
     schedule: list[dict[str, Any]],
 ) -> None:
     """Evaluate alerts from enabled schedule entries against the current trip."""
-    global _travel_alert_fired, _last_call_fired
+    global _travel_alert_fired, _last_call_fired, _boarding_notified
 
     if not schedule:
         return
@@ -1242,11 +1265,13 @@ def check_travel_alerts(
         if not matches_day(trip_info, entry):
             _travel_alert_fired.pop(entry["name"], None)
             _last_call_fired.pop(entry["name"], None)
+            _boarding_notified.pop(entry["name"], None)
             continue
 
         if not matches_route(trip_info, entry):
             _travel_alert_fired.pop(entry["name"], None)
             _last_call_fired.pop(entry["name"], None)
+            _boarding_notified.pop(entry["name"], None)
             continue
 
         _check_alert_positional(trip_info, trip_data, entry)
@@ -1460,6 +1485,7 @@ def main() -> None:
                 entry["_state"] = "ACTIVE"
             _travel_alert_fired.clear()
             _last_call_fired.clear()
+            _boarding_notified.clear()
             _completed_notified.clear()
             log("New day. All schedules reset.")
             print_blank()
