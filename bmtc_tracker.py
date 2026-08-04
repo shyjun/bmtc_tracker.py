@@ -301,6 +301,20 @@ def validate_config(config: dict[str, Any]) -> None:
                     f"Error: schedule entry '{entry['name']}' alert missing '{key}'."
                 )
                 sys.exit(1)
+        if entry.get("alert_on_trip_start", False):
+            if not isinstance(entry.get("alert_on_trip_start"), bool):
+                log_error(
+                    f"Error: 'alert_on_trip_start' in schedule entry '{entry['name']}' "
+                    "must be a boolean."
+                )
+                sys.exit(1)
+            dist = entry.get("trip_start_distance_m", 100)
+            if not isinstance(dist, (int, float)) or dist <= 0:
+                log_error(
+                    f"Error: 'trip_start_distance_m' in schedule entry '{entry['name']}' "
+                    "must be a positive number."
+                )
+                sys.exit(1)
 
     log_cfg = config.get("log", {})
     l_max = log_cfg.get("max_lines", 2000)
@@ -696,6 +710,8 @@ _stale_notified = False
 _travel_alert_fired: dict[str, bool] = {}
 _last_call_fired: dict[str, bool] = {}
 _boarding_notified: dict[str, bool] = {}
+_trip_start_anchor: dict[str, tuple[float, float]] = {}
+_trip_start_fired: dict[str, bool] = {}
 _was_idle = False
 _last_good_refresh: Optional[datetime] = None
 
@@ -1219,6 +1235,88 @@ def _fire_travel_alert(entry: dict[str, Any]) -> None:
     notify_alert_message(alert["notification"])
 
 
+def check_trip_start(trip_info: dict[str, Any], entry: dict[str, Any]) -> None:
+    """
+    Fire a one-shot alert when the bus first starts moving from its source.
+
+    On the first poll where the matching trip is active, the bus's current
+    position is stored as the trip-start anchor (the parked/resting position).
+    Once the bus has moved more than *trip_start_distance_m* away from that
+    anchor, a notification is sent.  Does not affect the existing travel alert,
+    last-call, or boarding logic.
+
+    Distance threshold defaults to 100m when *trip_start_distance_m* is not set.
+    """
+    global _trip_start_anchor, _trip_start_fired
+
+    name = entry["name"]
+    if _trip_start_fired.get(name, False):
+        return
+
+    dist_m = entry.get("trip_start_distance_m", 100)
+    if dist_m <= 0:
+        dist_m = 100
+
+    lat = trip_info.get("latitude")
+    lon = trip_info.get("longitude")
+    if lat is None or lon is None:
+        return
+
+    anchor = _trip_start_anchor.get(name)
+    if anchor is None:
+        _trip_start_anchor[name] = (lat, lon)
+        log(f"Trip-start anchor set for {name} at ({lat}, {lon}); will alert after {dist_m}m movement.")
+        print_blank()
+        return
+
+    bus_pt = Point(lon, lat)
+    anchor_pt = Point(anchor[1], anchor[0])
+    moved_m = bus_pt.distance(anchor_pt) * 111320
+
+    if moved_m <= dist_m:
+        return
+
+    source = trip_info.get("source") or "Unknown"
+    message = (
+        f"Bus started from source location {source} "
+        f"and covered {moved_m:.0f} meters"
+    )
+    _fire_trip_start_block(entry, source, moved_m, message)
+    notify_alert_message(message)
+    _trip_start_fired[name] = True
+    _trip_start_anchor.pop(name, None)
+
+
+def _fire_trip_start_block(
+    entry: dict[str, Any],
+    source: str,
+    moved_m: float,
+    message: str,
+) -> None:
+    """Log a formatted block describing a trip-start alert."""
+    log_separator()
+    print_blank()
+    print_section("TRIP START ALERT")
+    print_blank()
+    log("Alert Name")
+    log(entry["name"])
+    print_blank()
+    log("Source")
+    log(source)
+    print_blank()
+    log("Destination")
+    log(entry.get("destination", "") or "")
+    print_blank()
+    log("Moved")
+    log(f"{moved_m:.0f} meters")
+    print_blank()
+    log("Notification")
+    log(message)
+    print_blank()
+    log_separator()
+    print_blank()
+
+
 def check_travel_alerts(
     trip_info: dict[str, Any],
     trip_data: dict[str, Any],
@@ -1266,13 +1364,20 @@ def check_travel_alerts(
             _travel_alert_fired.pop(entry["name"], None)
             _last_call_fired.pop(entry["name"], None)
             _boarding_notified.pop(entry["name"], None)
+            _trip_start_anchor.pop(entry["name"], None)
+            _trip_start_fired.pop(entry["name"], None)
             continue
 
         if not matches_route(trip_info, entry):
             _travel_alert_fired.pop(entry["name"], None)
             _last_call_fired.pop(entry["name"], None)
             _boarding_notified.pop(entry["name"], None)
+            _trip_start_anchor.pop(entry["name"], None)
+            _trip_start_fired.pop(entry["name"], None)
             continue
+
+        if entry.get("alert_on_trip_start"):
+            check_trip_start(trip_info, entry)
 
         _check_alert_positional(trip_info, trip_data, entry)
 
@@ -1486,6 +1591,8 @@ def main() -> None:
             _travel_alert_fired.clear()
             _last_call_fired.clear()
             _boarding_notified.clear()
+            _trip_start_anchor.clear()
+            _trip_start_fired.clear()
             _completed_notified.clear()
             log("New day. All schedules reset.")
             print_blank()

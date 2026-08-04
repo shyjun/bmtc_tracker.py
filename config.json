@@ -18,6 +18,8 @@
             "end": "13:30",
             "source": "Muttanalluru",
             "destination": "KR Market (Kalasipalya)",
+            "alert_on_trip_start": true,
+            "trip_start_distance_m": 50,
             "alert": {
                 "boarding_location": "Muttanalluru Gate",
                 "alert_start_location": "Muttanalluru",
@@ -33,6 +35,8 @@
             "end": "19:30",
             "source": "KR Market (Kalasipalya)",
             "destination": "Muttanalluru",
+            "alert_on_trip_start": true,
+            "trip_start_distance_m": 1000,
             "alert": {
                 "boarding_location": "Agara Junction",
                 "alert_start_location": "Muneshwara Devasthana",
