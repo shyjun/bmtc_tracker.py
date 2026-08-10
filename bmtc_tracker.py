@@ -714,6 +714,8 @@ _trip_start_anchor: dict[str, tuple[float, float]] = {}
 _trip_start_fired: dict[str, bool] = {}
 _was_idle = False
 _last_good_refresh: Optional[datetime] = None
+_last_good_location: Optional[str] = None
+_last_good_route: Optional[str] = None
 
 _log_fp: Optional[io.TextIOWrapper] = None
 _log_line_count: int = 0
@@ -885,10 +887,13 @@ def check_tracking(
         log("Tracking appears stale")
         if not _stale_notified:
             loc_name = trip_info["location"] or "Unknown"
+            route_src = trip_info["source"] or "N/A"
+            route_dst = trip_info["destination"] or "N/A"
             msg = (
                 f"Bus {bus_num} tracking is stale. "
                 f"Last refresh: {trip_info['last_refresh_str']}. "
-                f"Location: {loc_name}"
+                f"Location: {loc_name}. "
+                f"Route: {route_src} \u2192 {route_dst}."
             )
             notify_alert_message(msg)
             _stale_notified = True
@@ -1427,7 +1432,7 @@ def monitor(
     schedule_name: Optional[str] = None,
 ) -> None:
     """Perform a single poll of vehicle tracking data."""
-    global _was_idle, _last_good_refresh, _stale_notified
+    global _was_idle, _last_good_refresh, _stale_notified, _last_good_location, _last_good_route
 
     log_separator()
     log(datetime.now().strftime("%a %b %d %H:%M:%S"))
@@ -1444,7 +1449,9 @@ def monitor(
             if not _stale_notified:
                 msg = (
                     f"Bus {bus_num} tracking is stale. "
-                    f"No API response received since {_last_good_refresh}."
+                    f"No API response received since {_last_good_refresh}. "
+                    f"Location: {_last_good_location or 'Unknown'}. "
+                    f"Route: {_last_good_route or 'N/A'}."
                 )
                 notify_alert_message(msg)
                 _stale_notified = True
@@ -1458,6 +1465,10 @@ def monitor(
     if trip_info["last_refresh"] is not None:
         if _last_good_refresh is None or trip_info["last_refresh"] > _last_good_refresh:
             _last_good_refresh = trip_info["last_refresh"]
+            _last_good_location = trip_info["location"]
+            src = trip_info["source"] or "N/A"
+            dst = trip_info["destination"] or "N/A"
+            _last_good_route = f"{src} \u2192 {dst}"
 
     state = determine_tracker_state(trip_info, offline_after)
 
