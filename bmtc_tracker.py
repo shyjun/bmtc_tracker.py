@@ -410,14 +410,25 @@ def resolve_vehicle_id(session: requests.Session, bus_num: str) -> int:
     Resolve a vehicle ID from a bus registration number.
 
     Calls the ListVehicles API and finds the matching vehicle.
-    Exits on failure.
+    Retries indefinitely on transient failures, sending a one-time
+    phone notification on the 10th failure.
+    Exits on logical failures.
     """
     payload: dict[str, Any] = {"vehicleRegNo": bus_num}
-    try:
-        body = _api_post(session, LIST_VEHICLES_URL, payload)
-    except (requests.RequestException, json.JSONDecodeError) as e:
-        log_error(f"Error: vehicle lookup failed: {e}")
-        sys.exit(1)
+    attempts = 0
+    while True:
+        try:
+            body = _api_post(session, LIST_VEHICLES_URL, payload)
+            break
+        except (requests.RequestException, json.JSONDecodeError) as e:
+            attempts += 1
+            if attempts == 10:
+                notify_alert_message(
+                    f"Bus {bus_num} startup failed: vehicle lookup. "
+                    f"Error: {e}. Will keep retrying every 10s."
+                )
+            log_error(f"Error: vehicle lookup failed: {e}. Retrying in 10 seconds...")
+            time.sleep(10)
 
     if not isinstance(body, dict):
         log_error("Error: unexpected response format from ListVehicles.")
