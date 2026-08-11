@@ -753,6 +753,13 @@ def _find_script(name: str) -> Optional[str]:
     return None
 
 
+def _last_update_tail(trip_info: dict[str, Any]) -> str:
+    """Comma-joined last update time and location for alert messages."""
+    t = trip_info.get("last_refresh_str") or "unknown"
+    loc = trip_info.get("location") or "Unknown"
+    return f", Last update: {t}, Location: {loc}"
+
+
 def notify_alert_message(message: str) -> None:
     """Send stale notification via pushover and show it on screen."""
     build_script = _find_script("buildresultshow.sh")
@@ -1193,7 +1200,10 @@ def _check_alert_positional(
                         stop_pt = Point(stop_lon, stop_lat)
                         dist_m = bus_pt.distance(stop_pt) * 111320
                         if dist_m <= 200:
-                            notify_alert_message(f"Bus arrived at {boarding_location}")
+                            notify_alert_message(
+                                f"Bus arrived at {boarding_location}"
+                                + _last_update_tail(trip_info)
+                            )
                             _boarding_notified[name] = True
                 break
 
@@ -1208,11 +1218,15 @@ def _check_alert_positional(
 
     if current_idx >= start_idx:
         if not was_fired:
-            _fire_travel_alert(entry)
+            _fire_travel_alert(entry, trip_info)
             _travel_alert_fired[name] = True
         if _travel_alert_fired.get(name) and current_idx >= start_idx + 1:
             if not _last_call_fired.get(name):
-                notify_alert_message("Last call to leave! " + alert["notification"])
+                notify_alert_message(
+                    "Last call to leave! "
+                    + alert["notification"]
+                    + _last_update_tail(trip_info)
+                )
                 _last_call_fired[name] = True
         return
 
@@ -1221,7 +1235,7 @@ def _check_alert_positional(
         _travel_alert_fired.pop(name, None)
         _last_call_fired.pop(name, None)
 
-def _fire_travel_alert(entry: dict[str, Any]) -> None:
+def _fire_travel_alert(entry: dict[str, Any], trip_info: dict[str, Any]) -> None:
     """Send the travel alert notification and log the formatted block."""
     alert = entry["alert"]
     log_separator()
@@ -1248,7 +1262,7 @@ def _fire_travel_alert(entry: dict[str, Any]) -> None:
     log_separator()
     print_blank()
 
-    notify_alert_message(alert["notification"])
+    notify_alert_message(alert["notification"] + _last_update_tail(trip_info))
 
 
 def check_trip_start(trip_info: dict[str, Any], entry: dict[str, Any]) -> None:
@@ -1296,7 +1310,7 @@ def check_trip_start(trip_info: dict[str, Any], entry: dict[str, Any]) -> None:
     message = (
         f"Bus started from source location {source} "
         f"and covered {moved_m:.0f} meters"
-    )
+    ) + _last_update_tail(trip_info)
     _fire_trip_start_block(entry, source, moved_m, message)
     notify_alert_message(message)
     _trip_start_fired[name] = True
