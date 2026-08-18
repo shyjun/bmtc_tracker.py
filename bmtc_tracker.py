@@ -349,8 +349,10 @@ def _api_post(
         for line in json.dumps(payload, indent=2).splitlines():
             log(f"  {line}")
 
+    _t0 = time.monotonic()
     resp = session.post(url, headers=HEADERS, json=payload, timeout=_http_timeout)
-    log(f"HTTP {resp.status_code}")
+    _elapsed = time.monotonic() - _t0
+    log(f"HTTP {resp.status_code} (response took {_elapsed:.2f}s)")
 
     try:
         resp.raise_for_status()
