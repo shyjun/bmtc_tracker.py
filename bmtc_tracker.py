@@ -40,11 +40,21 @@ TRIP_DETAILS_URL = "https://bmtcmobileapi.karnataka.gov.in/WebAPI/VehicleTripDet
 HEADERS = {
     "Accept": "application/json, text/plain, */*",
     "Content-Type": "application/json",
-    "Origin": "https://nammabmtcapp.karnataka.gov.in",
     "Referer": "https://nammabmtcapp.karnataka.gov.in/",
-    "User-Agent": "Mozilla/5.0",
+    "User-Agent": (
+        "Mozilla/5.0 (X11; Linux x86_64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/150.0.0.0 Safari/537.36"
+    ),
     "deviceType": "WEB",
     "lan": "en",
+    "sec-ch-ua-platform": '"Linux"',
+    "sec-ch-ua": (
+        '"Not;A=Brand";v="8", '
+        '"Chromium";v="150", '
+        '"Google Chrome";v="150"'
+    ),
+    "sec-ch-ua-mobile": "?0",
 }
 
 DAY_NAMES = {"Mon": 0, "Tue": 1, "Wed": 2, "Thu": 3, "Fri": 4, "Sat": 5, "Sun": 6}
@@ -416,7 +426,7 @@ def resolve_vehicle_id(session: requests.Session, bus_num: str) -> int:
     phone notification on the 10th failure.
     Exits on logical failures.
     """
-    payload: dict[str, Any] = {"vehicleRegNo": bus_num}
+    payload: dict[str, Any] = {"vehicleRegNo": bus_num.strip().lower()}
     attempts = 0
     while True:
         try:
