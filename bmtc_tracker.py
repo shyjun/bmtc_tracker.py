@@ -33,6 +33,7 @@ from shapely.geometry import Point, LineString
 ################################################################################
 
 VERSION = "0.9.0"
+NOTIFY_GAP_SECS = 20
 _http_timeout = 10
 LIST_VEHICLES_URL = "https://bmtcmobileapi.karnataka.gov.in/WebAPI/ListVehicles"
 TRIP_DETAILS_URL = "https://bmtcmobileapi.karnataka.gov.in/WebAPI/VehicleTripDetails_v2"
@@ -732,6 +733,8 @@ def format_wait_duration(seconds: float) -> str:
 _stale_notified = False
 _stale_since: Optional[datetime] = None
 notify_on_tracking_resume = True
+_notify_queue: list[tuple[float, str]] = []
+_notify_next_ready: float = 0.0
 _travel_alert_fired: dict[str, bool] = {}
 _last_call_fired: dict[str, bool] = {}
 _boarding_notified: dict[str, bool] = {}
@@ -836,6 +839,40 @@ def notify_resumed() -> None:
         )
     except (FileNotFoundError, subprocess.TimeoutExpired) as e:
         log_error(f"Warning: pkill fallback failed: {e}")
+
+
+def queue_notify(message: str) -> None:
+    """Queue a notification to be sent after a gap from the previous one.
+
+    The first queued message fires immediately; subsequent ones are delayed
+    by NOTIFY_GAP_SECS so mobile notifications arrive one-by-one.
+    """
+    global _notify_next_ready
+    now_mono = time.monotonic()
+    ready_at = max(now_mono, _notify_next_ready) + NOTIFY_GAP_SECS
+    if not _notify_queue:
+        ready_at = now_mono
+    _notify_queue.append((ready_at, message))
+    _notify_next_ready = ready_at
+    if _verbose:
+        log(
+            f"[notify-queue] queued (ready in "
+            f"{ready_at - now_mono:.1f}s, queue depth {len(_notify_queue)}): "
+            f"{message[:80]}"
+        )
+
+
+def flush_notify_queue() -> None:
+    """Send any queued notifications whose time has arrived."""
+    global _notify_queue
+    now_mono = time.monotonic()
+    ready = [item for item in _notify_queue if item[0] <= now_mono]
+    if ready:
+        _notify_queue = [item for item in _notify_queue if item[0] > now_mono]
+        for _, msg in ready:
+            if _verbose:
+                log(f"[notify-queue] flushing: {msg[:80]}")
+            notify_alert_message(msg)
 
 
 ################################################################################
@@ -946,7 +983,7 @@ def check_tracking(
                         f"Location: {loc_name}. "
                         f"Route: {route_src} \u2192 {route_dst}."
                     )
-                    notify_alert_message(msg)
+                    queue_notify(msg)
                 else:
                     log(
                         f"Tracking resumed after {format_timedelta(offline_dur)} "
@@ -1256,7 +1293,7 @@ def _check_alert_positional(
             _travel_alert_fired[name] = True
         if _travel_alert_fired.get(name) and current_idx >= start_idx + 1:
             if not _last_call_fired.get(name):
-                notify_alert_message(
+                queue_notify(
                     "Last call to leave! "
                     + alert["notification"]
                     + _last_update_tail(trip_info)
@@ -1296,7 +1333,7 @@ def _fire_travel_alert(entry: dict[str, Any], trip_info: dict[str, Any]) -> None
     log_separator()
     print_blank()
 
-    notify_alert_message(alert["notification"] + _last_update_tail(trip_info))
+    queue_notify(alert["notification"] + _last_update_tail(trip_info))
 
 
 def check_trip_start(trip_info: dict[str, Any], entry: dict[str, Any]) -> None:
@@ -1649,6 +1686,7 @@ def main() -> None:
     while True:
         if always_track:
             monitor(session, vehicle_id, bus_num, offline_after, poll_interval, schedule, "Always")
+            flush_notify_queue()
             time.sleep(poll_interval)
             continue
 
@@ -1706,6 +1744,7 @@ def main() -> None:
             else:
                 monitor(session, vehicle_id, bus_num, offline_after, poll_interval, schedule, active)
 
+            flush_notify_queue()
             time.sleep(poll_interval)
         else:
             if _active_schedule is not None:
@@ -1716,6 +1755,7 @@ def main() -> None:
             next_window = find_next_window(now, active_schedule_list)
             if next_window is None:
                 log(f"{datetime.now():%a %b %d %H:%M:%S} No upcoming windows found in the next 14 days. Sleeping 1 hour.")
+                flush_notify_queue()
                 time.sleep(3600)
                 continue
 
@@ -1739,6 +1779,7 @@ def main() -> None:
             print_blank()
             log_separator()
             print_blank()
+            flush_notify_queue()
             time.sleep(sleep_secs)
 
 
