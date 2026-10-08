@@ -875,6 +875,37 @@ def flush_notify_queue() -> None:
             notify_alert_message(msg)
 
 
+def sleep_until(target: datetime) -> None:
+    """Sleep until *target* wall-clock time.
+
+    Sleeps in short chunks and re-checks the wall clock each time, so a
+    system suspend (which pauses the monotonic clock) cannot push the
+    wake-up past *target*.  The notification queue is flushed while
+    waiting, and the sleep shortens for any due item.  Logs a note if the
+    wall clock advanced far more than the monotonic clock during the
+    sleep (i.e. the machine was suspended).
+    """
+    start_wall = datetime.now()
+    start_mono = time.monotonic()
+    while True:
+        flush_notify_queue()
+        remaining = (target - datetime.now()).total_seconds()
+        if remaining <= 0:
+            break
+        wait = min(remaining, 30.0)
+        if _notify_queue:
+            wait = min(wait, max(0.5, _notify_queue[0][0] - time.monotonic()))
+        time.sleep(wait)
+    drift = (datetime.now() - start_wall).total_seconds() - (
+        time.monotonic() - start_mono
+    )
+    if drift > 120:
+        log(
+            f"Note: system suspended/not running for {format_wait_duration(drift)} "
+            "during this sleep."
+        )
+
+
 ################################################################################
 # Tracking
 ################################################################################
@@ -1686,8 +1717,7 @@ def main() -> None:
     while True:
         if always_track:
             monitor(session, vehicle_id, bus_num, offline_after, poll_interval, schedule, "Always")
-            flush_notify_queue()
-            time.sleep(poll_interval)
+            sleep_until(datetime.now() + timedelta(seconds=poll_interval))
             continue
 
         now = datetime.now()
@@ -1728,24 +1758,35 @@ def main() -> None:
                     print_blank()
                     _completed_notified.add(active)
                     next_dt = find_next_window(datetime.now(), schedule)
+                    target_name = ""
                     if next_dt:
                         for e in schedule:
                             if not e.get("enabled", False):
                                 continue
                             t = time_str_to_time(e["start"])
                             if next_dt.strftime("%a") in e["days"] and t == next_dt.time():
-                                log(f"Next schedule: {e['name']} at {e['start']}")
-                                sleep_secs = (next_dt - datetime.now()).total_seconds()
-                                if sleep_secs > 0:
-                                    log(f"Sleeping for {format_wait_duration(sleep_secs)} till {e['name']} at {e['start']}")
+                                target_name = f"{e['name']} at {e['start']}"
+                                log(f"Next schedule: {target_name}")
                                 break
                     else:
                         log("No upcoming schedules.")
+                    if _active_schedule is not None:
+                        log(f"{_active_schedule} Schedule Ended")
+                        print_blank()
+                        _active_schedule = None
+                    if next_dt:
+                        sleep_secs = (next_dt - datetime.now()).total_seconds()
+                        if sleep_secs > 0:
+                            if target_name:
+                                log(f"Sleeping for {format_wait_duration(sleep_secs)} till {target_name}")
+                            sleep_until(next_dt)
+                        continue
+                    sleep_until(datetime.now() + timedelta(hours=1))
+                    continue
             else:
                 monitor(session, vehicle_id, bus_num, offline_after, poll_interval, schedule, active)
 
-            flush_notify_queue()
-            time.sleep(poll_interval)
+            sleep_until(datetime.now() + timedelta(seconds=poll_interval))
         else:
             if _active_schedule is not None:
                 log(f"{_active_schedule} Schedule Ended")
@@ -1755,8 +1796,7 @@ def main() -> None:
             next_window = find_next_window(now, active_schedule_list)
             if next_window is None:
                 log(f"{datetime.now():%a %b %d %H:%M:%S} No upcoming windows found in the next 14 days. Sleeping 1 hour.")
-                flush_notify_queue()
-                time.sleep(3600)
+                sleep_until(datetime.now() + timedelta(hours=1))
                 continue
 
             sleep_secs = (next_window - datetime.now()).total_seconds()
@@ -1779,8 +1819,7 @@ def main() -> None:
             print_blank()
             log_separator()
             print_blank()
-            flush_notify_queue()
-            time.sleep(sleep_secs)
+            sleep_until(next_window)
 
 
 if __name__ == "__main__":
