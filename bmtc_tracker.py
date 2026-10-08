@@ -34,6 +34,8 @@ from shapely.geometry import Point, LineString
 
 VERSION = "0.9.0"
 NOTIFY_GAP_SECS = 20
+SLEEP_HEARTBEAT_SECS = 30 * 60
+SLEEP_GAP_SECS = 120
 _http_timeout = 10
 LIST_VEHICLES_URL = "https://bmtcmobileapi.karnataka.gov.in/WebAPI/ListVehicles"
 TRIP_DETAILS_URL = "https://bmtcmobileapi.karnataka.gov.in/WebAPI/VehicleTripDetails_v2"
@@ -881,29 +883,38 @@ def sleep_until(target: datetime) -> None:
     Sleeps in short chunks and re-checks the wall clock each time, so a
     system suspend (which pauses the monotonic clock) cannot push the
     wake-up past *target*.  The notification queue is flushed while
-    waiting, and the sleep shortens for any due item.  Logs a note if the
-    wall clock advanced far more than the monotonic clock during the
-    sleep (i.e. the machine was suspended).
+    waiting, and the sleep shortens for any due item.  During long
+    sleeps a progress line prints every SLEEP_HEARTBEAT_SECS, and a note
+    prints on resume if the machine was suspended/not running for more
+    than SLEEP_GAP_SECS during a nap.
     """
-    start_wall = datetime.now()
-    start_mono = time.monotonic()
+    last_beat = datetime.now()
+    prev_wall = last_beat
+    prev_mono = time.monotonic()
     while True:
         flush_notify_queue()
-        remaining = (target - datetime.now()).total_seconds()
+        now = datetime.now()
+        gap = (now - prev_wall).total_seconds() - (time.monotonic() - prev_mono)
+        if gap > SLEEP_GAP_SECS:
+            log(
+                f"Note: system suspended/not running for {format_wait_duration(gap)} "
+                "during this sleep."
+            )
+        remaining = (target - now).total_seconds()
         if remaining <= 0:
             break
+        if (now - last_beat).total_seconds() >= SLEEP_HEARTBEAT_SECS:
+            log(
+                f"Sleeping: {format_wait_duration(remaining)} remaining "
+                f"till {target:%a %b %d %H:%M:%S}"
+            )
+            last_beat = now
         wait = min(remaining, 30.0)
         if _notify_queue:
             wait = min(wait, max(0.5, _notify_queue[0][0] - time.monotonic()))
+        prev_wall = datetime.now()
+        prev_mono = time.monotonic()
         time.sleep(wait)
-    drift = (datetime.now() - start_wall).total_seconds() - (
-        time.monotonic() - start_mono
-    )
-    if drift > 120:
-        log(
-            f"Note: system suspended/not running for {format_wait_duration(drift)} "
-            "during this sleep."
-        )
 
 
 ################################################################################
