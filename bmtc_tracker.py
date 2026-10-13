@@ -996,6 +996,14 @@ def check_tracking(
 
     if is_stale:
         log("Tracking appears stale")
+        if trip_info["is_idle"]:
+            loc_name = trip_info["location"] or "Unknown"
+            lat = trip_info["latitude"] or "?"
+            lon = trip_info["longitude"] or "?"
+            log(
+                f"Location: {loc_name} ({lat}, {lon}) "
+                f"(fix {format_timedelta(diff)} old)"
+            )
         if not _stale_notified:
             _stale_since = now
             loc_name = trip_info["location"] or "Unknown"
@@ -1691,6 +1699,7 @@ def print_startup_banner(
 def main() -> None:
     """Entry point."""
     global _verbose, _show_http_msgs, _http_timeout
+    global _stale_notified, _stale_since
 
     args = parse_cli_args()
 
@@ -1757,6 +1766,8 @@ def main() -> None:
                 log(f"{active} Schedule Started")
                 print_blank()
                 _active_schedule = active
+                _stale_notified = False
+                _stale_since = None
 
             active_entry = next((e for e in schedule if e["name"] == active), None)
             is_completed = active_entry and active_entry.get("_state") == "COMPLETED"
