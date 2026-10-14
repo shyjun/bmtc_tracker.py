@@ -1018,7 +1018,7 @@ def check_tracking(
                 f"(fix {format_timedelta(diff)} old)"
             )
         if not _stale_notified:
-            _stale_since = now
+            _stale_since = trip_info["last_refresh"]
             loc_name = trip_info["location"] or "Unknown"
             route_src = trip_info["source"] or "N/A"
             route_dst = trip_info["destination"] or "N/A"
@@ -1037,23 +1037,17 @@ def check_tracking(
             notify_resumed()
             if notify_on_tracking_resume and _stale_since is not None:
                 offline_dur = now - _stale_since
-                if offline_dur >= offline_after:
-                    loc_name = trip_info["location"] or "Unknown"
-                    route_src = trip_info["source"] or "N/A"
-                    route_dst = trip_info["destination"] or "N/A"
-                    msg = (
-                        f"Bus {bus_num} tracking resumed after being stale for "
-                        f"{format_timedelta(offline_dur)}. "
-                        f"Location: {loc_name}. "
-                        f"Route: {route_src} \u2192 {route_dst}."
-                        + trip_status_tail(trip_info)
-                    )
-                    queue_notify(msg)
-                else:
-                    log(
-                        f"Tracking resumed after {format_timedelta(offline_dur)} "
-                        "(no resume notification; below offline threshold)"
-                    )
+                loc_name = trip_info["location"] or "Unknown"
+                route_src = trip_info["source"] or "N/A"
+                route_dst = trip_info["destination"] or "N/A"
+                msg = (
+                    f"Bus {bus_num} tracking resumed after being stale for "
+                    f"{format_timedelta(offline_dur)}. "
+                    f"Location: {loc_name}. "
+                    f"Route: {route_src} \u2192 {route_dst}."
+                    + trip_status_tail(trip_info)
+                )
+                queue_notify(msg)
             _stale_since = None
             _stale_notified = False
 
@@ -1866,7 +1860,7 @@ def monitor(
     if trip_data is None:
         if _last_good_refresh and datetime.now() - _last_good_refresh > offline_after:
             if not _stale_notified:
-                _stale_since = datetime.now()
+                _stale_since = _last_good_refresh
                 msg = (
                     f"Bus {bus_num} tracking is stale. "
                     f"No API response received since {_last_good_refresh}. "
