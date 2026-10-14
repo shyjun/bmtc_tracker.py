@@ -13,7 +13,13 @@
         {
             "name": "Morning",
             "enabled": true,
-            "days": ["Mon","Tue","Wed","Thu","Fri"],
+            "days": [
+                "Mon",
+                "Tue",
+                "Wed",
+                "Thu",
+                "Fri"
+            ],
             "start": "07:00",
             "end": "13:30",
             "source": "Muttanalluru",
@@ -25,12 +31,36 @@
                 "alert_start_location": "Muttanalluru",
                 "alert_end_location": "Kaggalipura Cross",
                 "notification": "Time to leave to office. Your bus is approaching!"
+            },
+            "location_fallback": {
+                "time_to_leave_zone": {
+                    "lat": 12.832365,
+                    "lon": 77.734582,
+                    "radius_m": 700
+                },
+                "last_call_move_m": 600,
+                "boarding_zone": {
+                    "lat": 12.842822,
+                    "lon": 77.727741,
+                    "radius_m": 200
+                },
+                "end_zone": {
+                    "stop": "Kaggalipura Cross",
+                    "radius_m": 500
+                },
+                "move_alert_m": 1000
             }
         },
         {
             "name": "Afternoon",
             "enabled": true,
-            "days": ["Mon","Tue","Wed","Thu","Fri"],
+            "days": [
+                "Mon",
+                "Tue",
+                "Wed",
+                "Thu",
+                "Fri"
+            ],
             "start": "14:00",
             "end": "19:30",
             "source": "KR Market (Kalasipalya)",
@@ -42,6 +72,24 @@
                 "alert_start_location": "Muneshwara Devasthana",
                 "alert_end_location": "Agara Junction",
                 "notification": "Time to leave to home! Your bus is approaching."
+            },
+            "location_fallback": {
+                "time_to_leave_zone": {
+                    "stop": "Muneshwara Devasthana",
+                    "radius_m": 700
+                },
+                "last_call_move_m": 600,
+                "boarding_zone": {
+                    "lat": 12.924577,
+                    "lon": 77.649503,
+                    "radius_m": 200
+                },
+                "end_zone": {
+                    "lat": 12.924577,
+                    "lon": 77.649503,
+                    "radius_m": 500
+                },
+                "move_alert_m": 1000
             }
         }
     ]

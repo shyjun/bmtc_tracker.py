@@ -742,6 +742,10 @@ _last_call_fired: dict[str, bool] = {}
 _boarding_notified: dict[str, bool] = {}
 _trip_start_anchor: dict[str, tuple[float, float]] = {}
 _trip_start_fired: dict[str, bool] = {}
+_fb_anchor: Optional[tuple[float, float]] = None
+_fb_move_notified = False
+_fb_trigger_point: Optional[tuple[float, float]] = None
+_fb_zone_warned: set[str] = set()
 _was_idle = False
 _last_good_refresh: Optional[datetime] = None
 _last_good_location: Optional[str] = None
@@ -777,6 +781,15 @@ def _last_update_tail(trip_info: dict[str, Any]) -> str:
     t = trip_info.get("last_refresh_str") or "unknown"
     loc = trip_info.get("location") or "Unknown"
     return f", Last update: {t}, Location: {loc}"
+
+
+def trip_status_tail(trip_info: dict[str, Any]) -> str:
+    """Suffix stating whether a trip is assigned to the vehicle."""
+    src = trip_info.get("source")
+    dst = trip_info.get("destination")
+    if trip_info.get("is_idle") or not src or not dst:
+        return " — No trip assigned"
+    return f" — Trip: {src} → {dst}"
 
 
 def notify_alert_message(message: str) -> None:
@@ -1014,6 +1027,7 @@ def check_tracking(
                 f"Last refresh: {trip_info['last_refresh_str']}. "
                 f"Location: {loc_name}. "
                 f"Route: {route_src} \u2192 {route_dst}."
+                + trip_status_tail(trip_info)
             )
             notify_alert_message(msg)
             _stale_notified = True
@@ -1032,6 +1046,7 @@ def check_tracking(
                         f"{format_timedelta(offline_dur)}. "
                         f"Location: {loc_name}. "
                         f"Route: {route_src} \u2192 {route_dst}."
+                        + trip_status_tail(trip_info)
                     )
                     queue_notify(msg)
                 else:
@@ -1044,6 +1059,96 @@ def check_tracking(
 
     print_blank()
     return not is_stale
+
+
+################################################################################
+# Geocache (learned station coordinates)
+################################################################################
+
+GEOCACHE_PATH = os.path.join(SCRIPT_DIR, "geocache.json")
+_geocache: dict[str, dict[str, float]] = {}
+_geocache_loaded = False
+
+
+def _load_geocache() -> None:
+    """Load geocache.json once into memory (missing file -> empty cache)."""
+    global _geocache, _geocache_loaded
+    if _geocache_loaded:
+        return
+    _geocache_loaded = True
+    if not os.path.isfile(GEOCACHE_PATH):
+        return
+    try:
+        with open(GEOCACHE_PATH, encoding="utf-8") as f:
+            data = json.load(f)
+        if isinstance(data, dict):
+            _geocache = data
+    except (OSError, json.JSONDecodeError) as e:
+        log_error(f"Warning: could not load geocache: {e}")
+
+
+def _save_geocache() -> None:
+    """Persist geocache to disk (best effort)."""
+    try:
+        with open(GEOCACHE_PATH, "w", encoding="utf-8") as f:
+            json.dump(_geocache, f, indent=2, sort_keys=True)
+    except OSError as e:
+        log_error(f"Warning: could not save geocache: {e}")
+
+
+def learn_geocache(trip_data: dict[str, Any]) -> None:
+    """Learn station coordinates from RouteDetails; save only when changed."""
+    _load_geocache()
+    changed = False
+    for r in get_route_details(trip_data):
+        name = r.get("stationname")
+        if not name:
+            continue
+        try:
+            lat = float(r.get("latitude"))
+            lon = float(r.get("longitude"))
+        except (TypeError, ValueError):
+            continue
+        if lat == 0 and lon == 0:
+            continue
+        key = _normalize(name)
+        if not key:
+            continue
+        cached = _geocache.get(key)
+        if cached is None or cached.get("lat") != lat or cached.get("lon") != lon:
+            _geocache[key] = {"lat": lat, "lon": lon, "name": name}
+            changed = True
+    if changed:
+        _save_geocache()
+
+
+def _resolve_zone(zone_cfg: Any) -> Optional[tuple[float, float, float]]:
+    """Resolve a zone config to (lat, lon, radius_m), or None if unresolvable.
+
+    Accepts {"lat":…, "lon":…, "radius_m":…} or {"stop":"Name","radius_m":…}
+    where "stop" is looked up (normalized) in the geocache.
+    """
+    if not isinstance(zone_cfg, dict):
+        return None
+    try:
+        radius = float(zone_cfg.get("radius_m", 500))
+    except (TypeError, ValueError):
+        return None
+    if "lat" in zone_cfg and "lon" in zone_cfg:
+        try:
+            return float(zone_cfg["lat"]), float(zone_cfg["lon"]), radius
+        except (TypeError, ValueError):
+            return None
+    stop = zone_cfg.get("stop")
+    if stop:
+        _load_geocache()
+        entry = _geocache.get(_normalize(stop))
+        if entry:
+            try:
+                return float(entry["lat"]), float(entry["lon"]), radius
+            except (TypeError, ValueError):
+                return None
+    return None
 
 
 ################################################################################
@@ -1324,6 +1429,7 @@ def _check_alert_positional(
                             notify_alert_message(
                                 f"Bus arrived at {boarding_location}"
                                 + _last_update_tail(trip_info)
+                                + trip_status_tail(trip_info)
                             )
                             _boarding_notified[name] = True
                 break
@@ -1347,6 +1453,7 @@ def _check_alert_positional(
                     "Last call to leave! "
                     + alert["notification"]
                     + _last_update_tail(trip_info)
+                    + trip_status_tail(trip_info)
                 )
                 _last_call_fired[name] = True
         return
@@ -1383,7 +1490,11 @@ def _fire_travel_alert(entry: dict[str, Any], trip_info: dict[str, Any]) -> None
     log_separator()
     print_blank()
 
-    queue_notify(alert["notification"] + _last_update_tail(trip_info))
+    queue_notify(
+        alert["notification"]
+        + _last_update_tail(trip_info)
+        + trip_status_tail(trip_info)
+    )
 
 
 def check_trip_start(trip_info: dict[str, Any], entry: dict[str, Any]) -> None:
@@ -1431,7 +1542,7 @@ def check_trip_start(trip_info: dict[str, Any], entry: dict[str, Any]) -> None:
     message = (
         f"Bus started from source location {source} "
         f"and covered {moved_m:.0f} meters"
-    ) + _last_update_tail(trip_info)
+    ) + _last_update_tail(trip_info) + trip_status_tail(trip_info)
     _fire_trip_start_block(entry, source, moved_m, message)
     notify_alert_message(message)
     _trip_start_fired[name] = True
@@ -1563,6 +1674,168 @@ def print_idle_status(trip_info: dict[str, Any]) -> None:
     print_blank()
 
 
+def _reset_fallback_state() -> None:
+    """Clear location-fallback per-window state (call at Schedule Started / new day)."""
+    global _fb_anchor, _fb_move_notified, _fb_trigger_point
+    _fb_anchor = None
+    _fb_move_notified = False
+    _fb_trigger_point = None
+    _fb_zone_warned.clear()
+
+
+def check_location_fallback(
+    trip_info: dict[str, Any],
+    entry: dict[str, Any],
+    bus_num: str,
+) -> None:
+    """Geofence fallback ladder when the bus has no trip assigned.
+
+    Runs only while the tracker is idle (no RouteDetails) inside an active
+    window. Stages, each one-shot per window:
+      time_to_leave_zone entry -> queue time-to-leave notification
+      last_call_move_m past the trigger point -> last-call notification
+      boarding_zone entry -> "Bus arrived at ..." notification
+      end_zone entry -> mark COMPLETED (main loop sleeps till next window)
+    Plus a generic move_alert_m heads-up when the bus moves far from its
+    first-seen idle position regardless of zones.
+    Shares _travel_alert_fired / _last_call_fired / _boarding_notified with
+    trip mode so a trip appearing later never double-fires.
+    """
+    global _fb_anchor, _fb_move_notified, _fb_trigger_point
+
+    lf = entry.get("location_fallback")
+    if not lf:
+        return
+
+    lat = trip_info.get("latitude")
+    lon = trip_info.get("longitude")
+    if lat is None or lon is None:
+        return
+    try:
+        lat = float(lat)
+        lon = float(lon)
+    except (TypeError, ValueError):
+        return
+
+    name = entry["name"]
+    if entry.get("_state") == "COMPLETED":
+        return
+    bus_pt = Point(lon, lat)
+    alert = entry.get("alert", {})
+    tails = _last_update_tail(trip_info) + trip_status_tail(trip_info)
+
+    if _fb_anchor is None:
+        _fb_anchor = (lat, lon)
+        log(f"[fallback] {name}: idle anchor set at ({lat}, {lon})")
+
+    def _zone_dist(zone_key: str) -> Optional[tuple[float, float]]:
+        """Return (distance_m, radius_m) if zone resolves, else None."""
+        resolved = _resolve_zone(lf.get(zone_key))
+        if resolved is None:
+            if zone_key not in _fb_zone_warned:
+                _fb_zone_warned.add(zone_key)
+                log(
+                    f"[fallback] {name}: zone '{zone_key}' unresolved "
+                    f"(waiting for geocache); stage inactive this window"
+                )
+            return None
+        zlat, zlon, zrad = resolved
+        dist = bus_pt.distance(Point(zlon, zlat)) * 111320
+        return dist, zrad
+
+    def _moved_from_anchor_m() -> float:
+        if _fb_anchor is None:
+            return 0.0
+        return bus_pt.distance(Point(_fb_anchor[1], _fb_anchor[0])) * 111320
+
+    fired_this_poll = False
+
+    # Stage 1: time-to-leave zone entry (requires movement from anchor so a
+    # bus parked at the source inside the zone overnight does not fire)
+    if not _travel_alert_fired.get(name):
+        z = _zone_dist("time_to_leave_zone")
+        if z is not None:
+            dist, zrad = z
+            depart_gate = float(entry.get("trip_start_distance_m", 50))
+            if dist <= zrad and _moved_from_anchor_m() >= depart_gate:
+                queue_notify(alert.get("notification", "") + tails)
+                _travel_alert_fired[name] = True
+                _fb_trigger_point = (lat, lon)
+                fired_this_poll = True
+                log(f"[fallback] {name}: time-to-leave zone entry")
+
+    # Stage 2: last call — moved past the trigger point
+    if (
+        _travel_alert_fired.get(name)
+        and not _last_call_fired.get(name)
+        and _fb_trigger_point is not None
+    ):
+        try:
+            last_call_m = float(lf.get("last_call_move_m", 600))
+        except (TypeError, ValueError):
+            last_call_m = 600.0
+        trig = bus_pt.distance(
+            Point(_fb_trigger_point[1], _fb_trigger_point[0])
+        ) * 111320
+        if trig > last_call_m:
+            queue_notify(
+                "Last call to leave! " + alert.get("notification", "") + tails
+            )
+            _last_call_fired[name] = True
+            fired_this_poll = True
+            log(f"[fallback] {name}: last call ({trig:.0f}m past trigger)")
+
+    # Stage 3: boarding zone entry
+    if not _boarding_notified.get(name):
+        z = _zone_dist("boarding_zone")
+        if z is not None:
+            dist, zrad = z
+            if dist <= zrad:
+                boarding_location = alert.get("boarding_location") or "boarding point"
+                notify_alert_message(
+                    f"Bus arrived at {boarding_location}" + tails
+                )
+                _boarding_notified[name] = True
+                fired_this_poll = True
+                log(f"[fallback] {name}: boarding zone entry")
+
+    # Stage 4: end zone -> COMPLETED (deferred until boarding fired if a
+    # boarding zone is configured, since its radius can be smaller and sit
+    # inside the end zone)
+    if lf.get("end_zone"):
+        z = _zone_dist("end_zone")
+        if z is not None:
+            dist, zrad = z
+            boarding_pending = lf.get("boarding_zone") and not _boarding_notified.get(name)
+            if dist <= zrad and not boarding_pending:
+                end_name = alert.get("alert_end_location") or "end zone"
+                queue_notify(
+                    f"{name} alert completed — bus crossed {end_name}." + tails
+                )
+                entry["_state"] = "COMPLETED"
+                fired_this_poll = True
+                log(f"[fallback] {name}: end zone entry -> COMPLETED")
+
+    # Generic movement heads-up, checked last and skipped when a zone stage
+    # fired this poll (bus appearing mid-route and entering a zone at once
+    # should not double-notify).
+    move_alert_m = lf.get("move_alert_m")
+    if (
+        move_alert_m
+        and not _fb_move_notified
+        and not fired_this_poll
+        and not _travel_alert_fired.get(name)
+    ):
+        if _moved_from_anchor_m() > float(move_alert_m):
+            queue_notify(
+                f"Bus {bus_num} is moving near "
+                f"{trip_info.get('location') or 'Unknown'}, but no trip is "
+                f"assigned. Check the BMTC app."
+                + tails
+            )
+            _fb_move_notified = True
+
+
 ################################################################################
 # Monitoring
 ################################################################################
@@ -1627,10 +1900,19 @@ def monitor(
         check_tracking(trip_info, bus_num, offline_after)
         _was_idle = True
         print_idle_status(trip_info)
+        if schedule:
+            now = datetime.now()
+            for entry in schedule:
+                if not is_in_window(now, entry):
+                    continue
+                if entry.get("_state") == "COMPLETED":
+                    continue
+                check_location_fallback(trip_info, entry, bus_num)
         return
 
     if state == TRACKER_RUNNING:
         check_tracking(trip_info, bus_num, offline_after)
+        learn_geocache(trip_data)
         if _was_idle:
             _was_idle = False
         if schedule:
@@ -1681,6 +1963,21 @@ def print_startup_banner(
             log(alert["alert_end_location"])
             log("Notification")
             log(alert["notification"])
+            lf = entry.get("location_fallback")
+            if lf:
+                log("Fallback zones (no trip)")
+                stages = []
+                if lf.get("time_to_leave_zone"):
+                    stages.append("time-to-leave")
+                if lf.get("last_call_move_m"):
+                    stages.append(f"last-call ({lf['last_call_move_m']}m move)")
+                if lf.get("boarding_zone"):
+                    stages.append("boarding")
+                if lf.get("end_zone"):
+                    stages.append("end")
+                if lf.get("move_alert_m"):
+                    stages.append(f"move-alert ({lf['move_alert_m']}m)")
+                log(" + ".join(stages) if stages else "none")
             if i < len(enabled_entries) - 1:
                 log("-" * 56)
     print_blank()
@@ -1753,6 +2050,7 @@ def main() -> None:
             _trip_start_anchor.clear()
             _trip_start_fired.clear()
             _completed_notified.clear()
+            _reset_fallback_state()
             log("New day. All schedules reset.")
             print_blank()
 
@@ -1768,6 +2066,7 @@ def main() -> None:
                 _active_schedule = active
                 _stale_notified = False
                 _stale_since = None
+                _reset_fallback_state()
 
             active_entry = next((e for e in schedule if e["name"] == active), None)
             is_completed = active_entry and active_entry.get("_state") == "COMPLETED"
