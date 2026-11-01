@@ -918,6 +918,7 @@ def sleep_until(target: datetime) -> None:
             break
         if (now - last_beat).total_seconds() >= SLEEP_HEARTBEAT_SECS:
             log(
+                f"[{now:%Y-%m-%d %H:%M:%S}] "
                 f"Sleeping: {format_wait_duration(remaining)} remaining "
                 f"till {target:%a %b %d %H:%M:%S}"
             )
