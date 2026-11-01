@@ -1,0 +1,332 @@
+{
+  "abbaiah circle sarjapura": {
+    "lat": 12.8597,
+    "lon": 77.79409,
+    "name": "Abbaiah Circle Sarjapura"
+  },
+  "agara junction": {
+    "lat": 12.92464,
+    "lon": 77.64937,
+    "name": "Agara Junction"
+  },
+  "ambedkar nagara": {
+    "lat": 12.89914,
+    "lon": 77.71286,
+    "name": "Ambedkar Nagara"
+  },
+  "baguru": {
+    "lat": 12.89645,
+    "lon": 77.84275,
+    "name": "Baguru"
+  },
+  "baguru colony": {
+    "lat": 12.89515,
+    "lon": 77.84536,
+    "name": "Baguru Colony"
+  },
+  "basappa circle": {
+    "lat": 12.95636,
+    "lon": 77.57717,
+    "name": "Basappa Circle"
+  },
+  "bellanduru gate sjp road": {
+    "lat": 12.91864,
+    "lon": 77.66931,
+    "name": "Bellanduru Gate SJP Road"
+  },
+  "bengaluru dairy circle": {
+    "lat": 12.93709,
+    "lon": 77.60105,
+    "name": "Bengaluru Dairy Circle"
+  },
+  "carmelram gate": {
+    "lat": 12.90343,
+    "lon": 77.70399,
+    "name": "Carmelram Gate"
+  },
+  "chambenahalli": {
+    "lat": 12.87933,
+    "lon": 77.76161,
+    "name": "Chambenahalli"
+  },
+  "champion international school": {
+    "lat": 12.8898,
+    "lon": 77.81803,
+    "name": "Champion International School"
+  },
+  "chikka thirupathi": {
+    "lat": 12.89532,
+    "lon": 77.867,
+    "name": "Chikka Thirupathi"
+  },
+  "chokkasandra cross": {
+    "lat": 12.87355,
+    "lon": 77.73402,
+    "name": "Chokkasandra Cross"
+  },
+  "crystal apartment sarjapura road": {
+    "lat": 12.86758,
+    "lon": 77.76714,
+    "name": "Crystal Apartment Sarjapura Road"
+  },
+  "depot-42 gate": {
+    "lat": 12.89553,
+    "lon": 77.7057,
+    "name": "Depot-42 Gate"
+  },
+  "depot-42 gate departure": {
+    "lat": 12.89553,
+    "lon": 77.7057,
+    "name": "Depot-42 Gate Departure"
+  },
+  "dodda thimmasandra gate": {
+    "lat": 12.879,
+    "lon": 77.81301,
+    "name": "Dodda Thimmasandra Gate"
+  },
+  "doddakannalli": {
+    "lat": 12.90715,
+    "lon": 77.69554,
+    "name": "Doddakannalli"
+  },
+  "dommasandra": {
+    "lat": 12.87953,
+    "lon": 77.75375,
+    "name": "Dommasandra"
+  },
+  "dommasandra circle": {
+    "lat": 12.88321,
+    "lon": 77.75239,
+    "name": "Dommasandra Circle"
+  },
+  "ganagaluru circle": {
+    "lat": 12.89332,
+    "lon": 77.85016,
+    "name": "Ganagaluru Circle"
+  },
+  "gopasandra gate": {
+    "lat": 12.85252,
+    "lon": 77.72986,
+    "name": "Gopasandra Gate"
+  },
+  "hadosiddapura": {
+    "lat": 12.89493,
+    "lon": 77.70109,
+    "name": "Hadosiddapura"
+  },
+  "harohalli gate": {
+    "lat": 12.86523,
+    "lon": 77.73251,
+    "name": "Harohalli Gate"
+  },
+  "head start school gate": {
+    "lat": 12.86121,
+    "lon": 77.73234,
+    "name": "Head Start School Gate"
+  },
+  "hosur road junction": {
+    "lat": 12.93203,
+    "lon": 77.61318,
+    "name": "Hosur Road junction"
+  },
+  "ibbaluru": {
+    "lat": 12.92135,
+    "lon": 77.66195,
+    "name": "Ibbaluru"
+  },
+  "jakkasandra": {
+    "lat": 12.92454,
+    "lon": 77.63826,
+    "name": "Jakkasandra"
+  },
+  "junnasandra gate wipro regional office": {
+    "lat": 12.91068,
+    "lon": 77.68451,
+    "name": "Junnasandra Gate Wipro Regional Office"
+  },
+  "kaggalipura cross": {
+    "lat": 12.85588,
+    "lon": 77.73117,
+    "name": "Kaggalipura Cross"
+  },
+  "kaikondrahalli": {
+    "lat": 12.91402,
+    "lon": 77.67714,
+    "name": "Kaikondrahalli"
+  },
+  "kodathi gate": {
+    "lat": 12.89653,
+    "lon": 77.7203,
+    "name": "Kodathi Gate"
+  },
+  "kommasandra gate": {
+    "lat": 12.87093,
+    "lon": 77.73381,
+    "name": "Kommasandra Gate"
+  },
+  "koramangala 1st block": {
+    "lat": 12.9249,
+    "lon": 77.63458,
+    "name": "Koramangala 1st Block"
+  },
+  "koramangala water tank": {
+    "lat": 12.92754,
+    "lon": 77.62067,
+    "name": "Koramangala Water Tank"
+  },
+  "kr market": {
+    "lat": 12.96154,
+    "lon": 77.57736,
+    "name": "KR Market (Kalasipalya)"
+  },
+  "kudure mukha colony": {
+    "lat": 12.92553,
+    "lon": 77.62563,
+    "name": "Kudure Mukha Colony"
+  },
+  "lakkasandra": {
+    "lat": 12.94383,
+    "lon": 77.59713,
+    "name": "Lakkasandra"
+  },
+  "lalbagh hopcoms": {
+    "lat": 12.95122,
+    "lon": 77.59132,
+    "name": "Lalbagh Hopcoms"
+  },
+  "lalbagh main gate": {
+    "lat": 12.95427,
+    "lon": 77.58449,
+    "name": "Lalbagh Main Gate"
+  },
+  "mahal chowdadenahalli": {
+    "lat": 12.87217,
+    "lon": 77.80852,
+    "name": "Mahal Chowdadenahalli"
+  },
+  "makkala koota": {
+    "lat": 12.95782,
+    "lon": 77.57393,
+    "name": "Makkala Koota"
+  },
+  "mugaluru": {
+    "lat": 12.89478,
+    "lon": 77.82101,
+    "name": "Mugaluru"
+  },
+  "muneshwara devasthana": {
+    "lat": 12.93638,
+    "lon": 77.60651,
+    "name": "Muneshwara Devasthana"
+  },
+  "muttanalluru": {
+    "lat": 12.83243,
+    "lon": 77.73456,
+    "name": "Muttanalluru"
+  },
+  "muttanalluru cross": {
+    "lat": 12.88735,
+    "lon": 77.73838,
+    "name": "Muttanalluru Cross"
+  },
+  "muttanalluru gate": {
+    "lat": 12.84306,
+    "lon": 77.72747,
+    "name": "Muttanalluru Gate"
+  },
+  "muttanalluru junction": {
+    "lat": 12.84306,
+    "lon": 77.72752,
+    "name": "Muttanalluru Junction"
+  },
+  "nimhans hospital": {
+    "lat": 12.93871,
+    "lon": 77.59824,
+    "name": "Nimhans Hospital"
+  },
+  "pandithana agrahara junction": {
+    "lat": 12.88492,
+    "lon": 77.81582,
+    "name": "Pandithana Agrahara Junction"
+  },
+  "radhareddy layout": {
+    "lat": 12.90869,
+    "lon": 77.68985,
+    "name": "Radhareddy Layout"
+  },
+  "rama devasthana sarjapur": {
+    "lat": 12.85984,
+    "lon": 77.78932,
+    "name": "Rama Devasthana Sarjapur"
+  },
+  "sarjapura": {
+    "lat": 12.86125,
+    "lon": 77.78568,
+    "name": "Sarjapura"
+  },
+  "sarjapura circle": {
+    "lat": 12.86089,
+    "lon": 77.78331,
+    "name": "Sarjapura Circle"
+  },
+  "sompura gate": {
+    "lat": 12.86209,
+    "lon": 77.77196,
+    "name": "Sompura Gate"
+  },
+  "st francis college": {
+    "lat": 12.92432,
+    "lon": 77.63124,
+    "name": "St francis College"
+  },
+  "st johns hospital": {
+    "lat": 12.92933,
+    "lon": 77.61594,
+    "name": "St Johns Hospital"
+  },
+  "subramanya swamy temple": {
+    "lat": 12.88657,
+    "lon": 77.74248,
+    "name": "Subramanya swamy Temple"
+  },
+  "sulikunte": {
+    "lat": 12.89228,
+    "lon": 77.72851,
+    "name": "Sulikunte"
+  },
+  "thigalara chowdenahalli cross": {
+    "lat": 12.88176,
+    "lon": 77.75683,
+    "name": "Thigalara Chowdenahalli Cross"
+  },
+  "thindlu gate": {
+    "lat": 12.86038,
+    "lon": 77.79881,
+    "name": "Thindlu Gate"
+  },
+  "thiruvaranga gate": {
+    "lat": 12.89588,
+    "lon": 77.8288,
+    "name": "Thiruvaranga Gate"
+  },
+  "town hall": {
+    "lat": 12.96355,
+    "lon": 77.58375,
+    "name": "Town Hall"
+  },
+  "wilson garden 7th cross": {
+    "lat": 12.94699,
+    "lon": 77.59436,
+    "name": "Wilson Garden 7th Cross"
+  },
+  "wipro campus sarjapura road": {
+    "lat": 12.89885,
+    "lon": 77.71371,
+    "name": "Wipro Campus Sarjapura Road"
+  },
+  "yamare": {
+    "lat": 12.87208,
+    "lon": 77.76646,
+    "name": "Yamare"
+  }
+}
